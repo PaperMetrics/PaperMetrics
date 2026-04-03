@@ -401,6 +401,42 @@ def find_best_column_match(target: str, columns: list) -> str:
         return columns[cols_clean.index(matches[0])]
     return None
 
+def bin_numeric_groups(series, max_bins=5):
+    """Bin a numeric series into meaningful groups (max 5)."""
+    s = pd.to_numeric(series, errors='coerce').dropna()
+    if len(s) == 0:
+        return series, None
+    
+    unique_count = len(s.unique())
+    if unique_count <= max_bins:
+        return series, None
+    
+    try:
+        actual_bins = min(max_bins, unique_count)
+        bin_edges = np.linspace(s.min(), s.max(), actual_bins + 1)
+        
+        labels_list = []
+        for i in range(actual_bins):
+            low = bin_edges[i]
+            high = bin_edges[i + 1]
+            if i == 0:
+                labels_list.append(f"≤{high:.0f}")
+            elif i == actual_bins - 1:
+                labels_list.append(f">{low:.0f}")
+            else:
+                labels_list.append(f"{low:.0f}-{high:.0f}")
+        
+        binned = pd.cut(s, bins=bin_edges, labels=labels_list, include_lowest=True, duplicates='drop')
+        
+        result = pd.Series(index=series.index, dtype='object')
+        result[series.isna()] = np.nan
+        result[series.notna()] = binned.values.astype(str)
+        
+        return result, True
+    except Exception as e:
+        print(f"DEBUG: Binning failed for {series.name}: {e}")
+        return series, None
+
 def json_safe_df(df: pd.DataFrame) -> pd.DataFrame:
     return df.replace([np.nan, np.inf, -np.inf], None)
 
@@ -618,6 +654,19 @@ async def execute_protocol_v6(file: UploadFile = File(...), protocol: str = Form
             desc = ""
             if len(df_curr) >= 2:
                 var_data = df_curr[var_name].values
+                
+                # Auto-bin numeric columns with too many unique values (max 5 groups)
+                binned_series = None
+                is_binned = False
+                var_numeric = pd.to_numeric(df_curr[var_name], errors='coerce')
+                unique_numeric = var_numeric.dropna().nunique()
+                if unique_numeric > 5 and not var_numeric.isna().all():
+                    binned_series, is_binned = bin_numeric_groups(df_curr[var_name], max_bins=5)
+                    if is_binned:
+                        df_curr[var_name] = binned_series
+                        var_data = df_curr[var_name].values
+                        print(f"DEBUG: Binned '{var_name}' into {df_curr[var_name].nunique()} groups")
+                
                 try:
                     if outcome_col and outcome_col != var_name:
                         outcome_data = pd.to_numeric(df_curr[outcome_col], errors='coerce').dropna()
@@ -698,8 +747,9 @@ async def execute_protocol_v6(file: UploadFile = File(...), protocol: str = Form
                 except Exception as e: 
                     print(f"MATH ERR {var_name} ({test}): {e}")
             
+            label_suffix = " [faixas]" if is_binned else ""
             result_item = {
-                "testLabel": f"{var_name} ({test})", 
+                "testLabel": f"{var_name}{label_suffix} ({test})", 
                 "statistic": round(float(stat), 4) if stat is not None else None, 
                 "p_value": round(float(p_val), 4) if p_val is not None else None,
                 "median_iqr": f"{median_val:.2f} ({iqr_val})" if median_val is not None and iqr_val else None,
