@@ -7,6 +7,7 @@ import DynamicChart from '../components/DynamicChart'
 import BioSummaryTable from '../components/BioSummaryTable'
 import AnalysisReviewPlan from '../components/AnalysisReviewPlan'
 import ChartGeneratorModal from '../components/ChartGeneratorModal'
+import StatTooltip from '../components/StatTooltip'
 
 const MOCK_CHARTS = {
   barData: {
@@ -159,6 +160,7 @@ export default function Dashboard() {
   const [isDragging, setIsDragging] = useState(false)
   const [outcomeOptions, setOutcomeOptions] = useState([])
   const [chartModal, setChartModal] = useState({ open: false, data: null, varName: '' })
+  const [detailModal, setDetailModal] = useState(null)
   const fileInputRef = useRef(null)
 
   const toggleTest = (id) => setSelectedTests(prev => ({ ...prev, [id]: !prev[id] }))
@@ -544,11 +546,13 @@ export default function Dashboard() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="bg-white/1">
-                      <th className="text-left px-6 py-5 font-black text-slate-500 uppercase text-[10px] tracking-widest">Variável / Teste</th>
-                      <th className="text-left px-6 py-5 font-black text-slate-500 uppercase text-[10px] tracking-widest">Mediana (IQR) por Grupo</th>
-                      <th className="text-right px-6 py-5 font-black text-slate-500 uppercase text-[10px] tracking-widest">Valor P</th>
-                      <th className="text-center px-6 py-5 font-black text-slate-500 uppercase text-[10px] tracking-widest">Sig.</th>
-                      <th className="text-center px-6 py-5 font-black text-slate-500 uppercase text-[10px] tracking-widest">Gráfico</th>
+                      <th className="text-left px-6 py-5 font-black text-slate-500 uppercase text-[10px] tracking-widest w-[30%]">Variável / Teste</th>
+                      <th className="text-left px-6 py-5 font-black text-slate-500 uppercase text-[10px] tracking-widest w-[20%]">Estatísticas</th>
+                      <th className="text-right px-6 py-5 font-black text-slate-500 uppercase text-[10px] tracking-widest w-[10%]"><StatTooltip term="p-valor">Valor P</StatTooltip></th>
+                      <th className="text-center px-6 py-5 font-black text-slate-500 uppercase text-[10px] tracking-widest w-[8%]">Sig.</th>
+                      <th className="text-left px-6 py-5 font-black text-slate-500 uppercase text-[10px] tracking-widest w-[15%]"><StatTooltip term="effect_size">Tam. Efeito</StatTooltip></th>
+                      <th className="text-center px-6 py-5 font-black text-slate-500 uppercase text-[10px] tracking-widest w-[8%]">Gráfico</th>
+                      <th className="text-center px-6 py-5 font-black text-slate-500 uppercase text-[10px] tracking-widest w-[9%]">Detalhes</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
@@ -564,7 +568,27 @@ export default function Dashboard() {
                                     <span className="w-1.5 h-1.5 rounded-full bg-primary/60"></span>
                                     <span className="text-[10px] font-bold text-slate-400">{g.group}</span>
                                     <span className="text-[9px] font-black text-primary bg-primary/10 px-1.5 py-0.5 rounded">N:{g.n}</span>
+                                    {g.pct_of_total && <span className="text-[9px] font-bold text-slate-500">({g.pct_of_total})</span>}
                                   </span>
+                                ))}
+                              </div>
+                            )}
+                            {r?.interpretation && (
+                              <div className="mt-2 p-2.5 bg-primary/5 border border-primary/10 rounded-lg">
+                                <p className="text-[10px] leading-relaxed text-slate-300">
+                                  <span className="material-symbols-rounded text-[10px] text-primary align-middle mr-1">auto_awesome</span>
+                                  {r.interpretation}
+                                </p>
+                              </div>
+                            )}
+                            {r?.assumptions && r.assumptions.length > 0 && (
+                              <div className="mt-1 space-y-1">
+                                {r.assumptions.map((a, ai) => (
+                                  <div key={ai} className={`flex items-start gap-1.5 text-[9px] px-2 py-1 rounded ${a.severity === 'warning' ? 'bg-amber-500/10 border border-amber-500/20 text-amber-400' : 'bg-blue-500/10 border border-blue-500/20 text-blue-400'}`}>
+                                    <span className="material-symbols-rounded text-[10px] mt-px">{a.severity === 'warning' ? 'warning' : 'info'}</span>
+                                    <span>{a.message}</span>
+                                    {a.recommendation && <span className="font-bold ml-1">→ Sugestão: {a.recommendation}</span>}
+                                  </div>
                                 ))}
                               </div>
                             )}
@@ -574,22 +598,79 @@ export default function Dashboard() {
                           <div className="flex flex-col gap-1.5 items-end">
                             {r?.group_stats && r.group_stats.length > 0 ? (
                               r.group_stats.map(g => (
-                                <div key={g.group} className="flex items-center gap-2">
-                                  <span className="text-[10px] font-bold text-slate-500 text-right">{g.group}:</span>
-                                  <span className="text-xs font-mono font-bold text-white">{g.median_iqr}</span>
+                                <div key={g.group} className="flex flex-col items-end gap-0.5">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[10px] font-bold text-slate-500 text-right">{g.group}:</span>
+                                    <span className="text-xs font-mono font-bold text-white">{g.median_iqr}</span>
+                                  </div>
+                                  {g.mean != null && (
+                                    <span className="text-[9px] font-mono text-slate-500">M={g.mean} ±{g.std}</span>
+                                  )}
+                                  {g.ci_95 && (
+                                    <span className="text-[9px] font-mono text-slate-600">
+                                      <StatTooltip term="ic95">IC95%</StatTooltip>:[{g.ci_95.ci_lower}, {g.ci_95.ci_upper}]
+                                    </span>
+                                  )}
                                 </div>
                               ))
                             ) : (
                               <span className="text-xs font-mono font-bold text-slate-400">{r?.median_iqr || '—'}</span>
                             )}
+                            {r?.ci && (
+                              <div className="mt-1 text-[9px] font-mono text-slate-500">
+                                <StatTooltip term="ic95">IC95% global</StatTooltip>: [{r.ci.ci_lower}, {r.ci.ci_upper}]
+                              </div>
+                            )}
                           </div>
                         </td>
                         <td className="px-6 py-5 text-right font-mono">
-                          <span className={`font-black ${(r?.p_value != null && r.p_value < 0.05) ? 'text-primary' : 'text-slate-600'}`}>
-                            {r?.p_value != null ? (r.p_value < 0.001 ? '<0.001' : r.p_value.toFixed(4)) : '—'}
-                          </span>
+                          <StatTooltip term="p-valor">
+                            <span className={`font-black ${(r?.p_value != null && r.p_value < 0.05) ? 'text-primary' : 'text-slate-600'}`}>
+                              {r?.p_value != null ? (r.p_value < 0.001 ? '<0.001' : r.p_value.toFixed(4)) : '—'}
+                            </span>
+                          </StatTooltip>
                         </td>
                         <td className="px-6 py-5 text-center"><span className={`text-[12px] font-black tracking-widest ${(r?.p_value != null && r.p_value < 0.05) ? 'text-primary' : 'text-slate-700'}`}>{significance(r?.p_value)}</span></td>
+                        <td className="px-6 py-5">
+                          <div className="flex flex-col items-center gap-1">
+                            {r?.effect_size ? (
+                              <>
+                                {r.effect_size.cohens_d != null && (
+                                  <StatTooltip term="cohens_d">
+                                    <span className="text-xs font-mono font-bold text-white">d={r.effect_size.cohens_d}</span>
+                                  </StatTooltip>
+                                )}
+                                {r.effect_size.eta_squared != null && (
+                                  <StatTooltip term="eta_squared">
+                                    <span className="text-xs font-mono font-bold text-white">η²={r.effect_size.eta_squared}</span>
+                                  </StatTooltip>
+                                )}
+                                {r.effect_size.r_squared != null && (
+                                  <StatTooltip term="r_squared">
+                                    <span className="text-xs font-mono font-bold text-white">R²={r.effect_size.r_squared}</span>
+                                  </StatTooltip>
+                                )}
+                                {r.effect_size.cramers_v != null && (
+                                  <StatTooltip term="cramers_v">
+                                    <span className="text-xs font-mono font-bold text-white">V={r.effect_size.cramers_v}</span>
+                                  </StatTooltip>
+                                )}
+                                <span className={`text-[9px] font-bold ${r.effect_size.interpretation === 'Grande' || r.effect_size.interpretation === 'Forte' || r.effect_size.interpretation === 'Muito forte' ? 'text-primary' : r.effect_size.interpretation === 'Médio' || r.effect_size.interpretation === 'Moderado' ? 'text-amber-400' : 'text-slate-500'}`}>
+                                  ({r.effect_size.interpretation})
+                                </span>
+                                {r.effect_size.achieved_power != null && (
+                                  <StatTooltip term="power">
+                                    <span className={`text-[9px] font-bold ${r.effect_size.achieved_power >= 0.8 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                      Poder: {(r.effect_size.achieved_power * 100).toFixed(0)}%
+                                    </span>
+                                  </StatTooltip>
+                                )}
+                              </>
+                            ) : (
+                              <span className="text-xs text-slate-600">—</span>
+                            )}
+                          </div>
+                        </td>
                         <td className="px-6 py-5 text-center">
                           {r?.chart_data && (
                             <motion.button
@@ -602,6 +683,17 @@ export default function Dashboard() {
                               <span className="material-symbols-rounded text-sm">bar_chart</span>
                             </motion.button>
                           )}
+                        </td>
+                        <td className="px-6 py-5 text-center">
+                          <motion.button
+                            whileHover={{ scale: 1.15 }}
+                            whileTap={{ scale: 0.9 }}
+                            onClick={() => setDetailModal(r)}
+                            className="w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-white transition-all mx-auto"
+                            title="Ver detalhes completos"
+                          >
+                            <span className="material-symbols-rounded text-sm">info</span>
+                          </motion.button>
                         </td>
                       </tr>
                     ))}
@@ -619,6 +711,166 @@ export default function Dashboard() {
         chartData={chartModal.data}
         varName={chartModal.varName}
       />
+
+      <AnimatePresence>
+        {detailModal && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+            onClick={() => setDetailModal(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+              className="glass-card max-w-2xl w-full max-h-[85vh] overflow-y-auto rounded-2xl border border-white/10"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="p-6 border-b border-white/5 flex items-center justify-between">
+                <h3 className="text-sm font-black text-white">{detailModal.testLabel}</h3>
+                <button onClick={() => setDetailModal(null)} className="text-slate-500 hover:text-white transition-colors">
+                  <span className="material-symbols-rounded">close</span>
+                </button>
+              </div>
+              <div className="p-6 space-y-6">
+                {detailModal.interpretation && (
+                  <div className="p-4 bg-primary/5 border border-primary/10 rounded-xl">
+                    <p className="text-[10px] font-black uppercase tracking-wider text-primary mb-2 flex items-center gap-2">
+                      <span className="material-symbols-rounded text-sm">auto_awesome</span> Interpretação
+                    </p>
+                    <p className="text-xs leading-relaxed text-slate-300">{detailModal.interpretation}</p>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="p-3 bg-white/5 rounded-xl border border-white/5">
+                    <p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Estatística</p>
+                    <p className="text-lg font-black text-white font-mono">{detailModal.statistic != null ? detailModal.statistic : '—'}</p>
+                  </div>
+                  <div className="p-3 bg-white/5 rounded-xl border border-white/5">
+                    <p className="text-[9px] font-bold text-slate-500 uppercase mb-1"><StatTooltip term="p-valor">P-valor</StatTooltip></p>
+                    <p className={`text-lg font-black font-mono ${detailModal.p_value != null && detailModal.p_value < 0.05 ? 'text-primary' : 'text-slate-400'}`}>
+                      {detailModal.p_value != null ? (detailModal.p_value < 0.001 ? '<0.001' : detailModal.p_value.toFixed(4)) : '—'}
+                    </p>
+                  </div>
+                </div>
+
+                {detailModal.effect_size && (
+                  <div className="p-4 bg-white/5 rounded-xl border border-white/5">
+                    <p className="text-[9px] font-bold text-slate-500 uppercase mb-2"><StatTooltip term="effect_size">Tamanho do Efeito</StatTooltip></p>
+                    <div className="space-y-1">
+                      {detailModal.effect_size.cohens_d != null && (
+                        <p className="text-xs text-slate-300"><StatTooltip term="cohens_d">d de Cohen</StatTooltip>: <span className="font-bold text-white">{detailModal.effect_size.cohens_d}</span> ({detailModal.effect_size.interpretation})</p>
+                      )}
+                      {detailModal.effect_size.eta_squared != null && (
+                        <p className="text-xs text-slate-300"><StatTooltip term="eta_squared">Eta²</StatTooltip>: <span className="font-bold text-white">{detailModal.effect_size.eta_squared}</span> ({detailModal.effect_size.interpretation})</p>
+                      )}
+                      {detailModal.effect_size.r_squared != null && (
+                        <p className="text-xs text-slate-300"><StatTooltip term="r_squared">R²</StatTooltip>: <span className="font-bold text-white">{detailModal.effect_size.r_squared}</span> ({detailModal.effect_size.interpretation})</p>
+                      )}
+                      {detailModal.effect_size.cramers_v != null && (
+                        <p className="text-xs text-slate-300"><StatTooltip term="cramers_v">V de Cramer</StatTooltip>: <span className="font-bold text-white">{detailModal.effect_size.cramers_v}</span> ({detailModal.effect_size.interpretation})</p>
+                      )}
+                      {detailModal.effect_size.achieved_power != null && (
+                        <p className={`text-xs font-bold ${detailModal.effect_size.achieved_power >= 0.8 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          <StatTooltip term="power">Poder estatístico</StatTooltip>: {(detailModal.effect_size.achieved_power * 100).toFixed(0)}%
+                          {detailModal.effect_size.achieved_power < 0.8 && ' ⚠ Abaixo do ideal (80%)'}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {detailModal.ci && (
+                  <div className="p-3 bg-white/5 rounded-xl border border-white/5">
+                    <p className="text-[9px] font-bold text-slate-500 uppercase mb-1"><StatTooltip term="ic95">Intervalo de Confiança 95%</StatTooltip></p>
+                    <p className="text-xs text-slate-300 font-mono">[{detailModal.ci.ci_lower}, {detailModal.ci.ci_upper}] (SE={detailModal.ci.se})</p>
+                  </div>
+                )}
+
+                {detailModal.odds_ratio && (
+                  <div className="p-4 bg-white/5 rounded-xl border border-white/5">
+                    <p className="text-[9px] font-bold text-slate-500 uppercase mb-2"><StatTooltip term="odds_ratio">Odds Ratio & Risk Ratio</StatTooltip></p>
+                    <div className="space-y-1">
+                      <p className="text-xs text-slate-300">OR: <span className="font-bold text-white">{detailModal.odds_ratio.odds_ratio}</span> (IC95%: {detailModal.odds_ratio.or_ci_95})</p>
+                      {detailModal.odds_ratio.risk_ratio != null && (
+                        <p className="text-xs text-slate-300">RR: <span className="font-bold text-white">{detailModal.odds_ratio.risk_ratio}</span> (IC95%: {detailModal.odds_ratio.rr_ci_95})</p>
+                      )}
+                      <p className="text-xs text-primary font-bold">{detailModal.odds_ratio.interpretation}</p>
+                    </div>
+                  </div>
+                )}
+
+                {detailModal.post_hoc && detailModal.post_hoc.comparisons && detailModal.post_hoc.comparisons.length > 0 && (
+                  <div className="p-4 bg-white/5 rounded-xl border border-white/5">
+                    <p className="text-[9px] font-bold text-slate-500 uppercase mb-2"><StatTooltip term="post_hoc">Testes Post-Hoc ({detailModal.post_hoc.method})</StatTooltip></p>
+                    <p className="text-[9px] text-slate-500 mb-2">α ajustado = {detailModal.post_hoc.alpha_adjustado} ({detailModal.post_hoc.n_comparisons} comparações)</p>
+                    <div className="space-y-1">
+                      {detailModal.post_hoc.comparisons.map((c, ci) => (
+                        <div key={ci} className={`flex items-center justify-between text-xs p-2 rounded-lg ${c.significant ? 'bg-primary/10 border border-primary/20' : 'bg-white/3'}`}>
+                          <span className="text-slate-300 font-medium">{c.comparison}</span>
+                          <div className="flex items-center gap-3">
+                            <span className="font-mono text-slate-400">p={c.p_value_bonferroni < 0.001 ? '<0.001' : c.p_value_bonferroni.toFixed(4)}</span>
+                            {c.cohens_d != null && <span className="text-[9px] text-slate-500">d={c.cohens_d}</span>}
+                            <span className={`text-[10px] font-black ${c.significant ? 'text-primary' : 'text-slate-600'}`}>{c.significant ? '✦ SIG' : 'ns'}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {detailModal.assumptions && detailModal.assumptions.length > 0 && (
+                  <div className="p-4 bg-white/5 rounded-xl border border-white/5">
+                    <p className="text-[9px] font-bold text-slate-500 uppercase mb-2">Verificação de Pressupostos</p>
+                    <div className="space-y-2">
+                      {detailModal.assumptions.map((a, ai) => (
+                        <div key={ai} className={`p-3 rounded-lg border ${a.severity === 'warning' ? 'bg-amber-500/10 border-amber-500/20' : 'bg-blue-500/10 border-blue-500/20'}`}>
+                          <p className={`text-xs font-bold mb-1 ${a.severity === 'warning' ? 'text-amber-400' : 'text-blue-400'}`}>
+                            {a.severity === 'warning' ? '⚠ Atenção' : 'ℹ Informação'}
+                          </p>
+                          <p className="text-[11px] text-slate-300">{a.message}</p>
+                          {a.recommendation && <p className="text-[10px] text-primary mt-1 font-bold">→ Sugestão: {a.recommendation}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {detailModal.group_stats && detailModal.group_stats.length > 0 && (
+                  <div className="p-4 bg-white/5 rounded-xl border border-white/5">
+                    <p className="text-[9px] font-bold text-slate-500 uppercase mb-3">Estatísticas por Grupo</p>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-[10px]">
+                        <thead>
+                          <tr className="text-slate-500 border-b border-white/5">
+                            <th className="text-left pb-2 font-black uppercase">Grupo</th>
+                            <th className="text-right pb-2 font-black uppercase">N</th>
+                            <th className="text-right pb-2 font-black uppercase"><StatTooltip term="mediana">Mediana</StatTooltip></th>
+                            <th className="text-right pb-2 font-black uppercase">Média ± DP</th>
+                            <th className="text-right pb-2 font-black uppercase"><StatTooltip term="iqr">IQR</StatTooltip></th>
+                            <th className="text-right pb-2 font-black uppercase"><StatTooltip term="ic95">IC95%</StatTooltip></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {detailModal.group_stats.map((g, gi) => (
+                            <tr key={gi} className="border-b border-white/5">
+                              <td className="py-2 font-bold text-white">{g.group}</td>
+                              <td className="py-2 text-right text-slate-400">{g.n} {g.pct_of_total && <span className="text-slate-600">({g.pct_of_total})</span>}</td>
+                              <td className="py-2 text-right font-mono text-white">{g.median}</td>
+                              <td className="py-2 text-right font-mono text-slate-300">{g.mean} ± {g.std}</td>
+                              <td className="py-2 text-right font-mono text-slate-400">{g.iqr}</td>
+                              <td className="py-2 text-right font-mono text-slate-400">{g.ci_95 ? `[${g.ci_95.ci_lower}, ${g.ci_95.ci_upper}]` : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {!showReview && results.length === 0 && !fileData && (
         <>

@@ -9,7 +9,7 @@ services:
       - ./backend:/app
       - /app/__pycache__ # Evitar conflitos de cache
     environment:
-      - DATABASE_URL=sqlite:///biostat.db
+      - DATABASE_URL=postgresql://neondb_owner:npg_kHnN4hmF2LMw@ep-summer-queen-ac9q4qes-pooler.sa-east-1.aws.neon.tech/neondb?sslmode=require
       - GOOGLE_API_KEY=AIzaSyCibhp0sp8Xb2B8uXXdb3xG1JVayPZhvqE
     networks:
       - scistat-network
@@ -25,6 +25,7 @@ services:
       - /app/node_modules # Evitar sobrepor módulos locais com os do contêiner
     environment:
       - VITE_API_BASE_URL=http://localhost:8000
+      - VITE_NEON_AUTH_URL=https://ep-summer-queen-ac9q4qes.neonauth.sa-east-1.aws.neon.tech/neondb/auth
     env_file:
       - ./frontend/.env
     depends_on:

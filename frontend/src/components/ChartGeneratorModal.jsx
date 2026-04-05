@@ -40,7 +40,7 @@ export default function ChartGeneratorModal({ isOpen, onClose, chartData, varNam
   const barData = {
     labels,
     datasets: [{
-      label: 'Mediana',
+      label: 'Contagem (N)',
       data: values,
       backgroundColor: values.map((_, i) => `rgba(0, 255, 163, ${0.2 + i * 0.1})`),
       borderColor: '#00FFA3',
@@ -53,7 +53,7 @@ export default function ChartGeneratorModal({ isOpen, onClose, chartData, varNam
   const lineData = {
     labels,
     datasets: [{
-      label: 'Mediana',
+      label: 'Contagem (N)',
       data: values,
       borderColor: '#00FFA3',
       backgroundColor: 'rgba(0, 255, 163, 0.08)',
@@ -94,7 +94,7 @@ export default function ChartGeneratorModal({ isOpen, onClose, chartData, varNam
       legend: { display: false },
       title: {
         display: true,
-        text: `${varName} — Mediana por Grupo`,
+        text: `${varName} — Contagem (N) por Grupo`,
         color: 'rgba(255, 255, 255, 0.8)',
         font: { size: 16, family: 'Inter', weight: '700' }
       },

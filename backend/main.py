@@ -441,13 +441,46 @@ def json_safe_df(df: pd.DataFrame) -> pd.DataFrame:
     return df.replace([np.nan, np.inf, -np.inf], None)
 
 def clean_dict_values(d: Dict[str, Any]) -> Dict[str, Any]:
-    if not isinstance(d, dict): return d
+    if not isinstance(d, dict):
+        if isinstance(d, dict):
+            return {k: clean_dict_values(v) for k, v in d.items()}
+        return d
     new_dict = {}
     for k, v in d.items():
-        if isinstance(v, dict): new_dict[k] = clean_dict_values(v)
-        elif isinstance(v, float) and (np.isnan(v) or np.isinf(v)): new_dict[k] = None
-        elif isinstance(v, list): new_dict[k] = [None if isinstance(x, float) and (np.isnan(x) or np.isinf(x)) else x for x in v]
-        else: new_dict[k] = v
+        if isinstance(v, dict):
+            new_dict[k] = clean_dict_values(v)
+        elif isinstance(v, (np.bool_, np.bool)):
+            new_dict[k] = bool(v)
+        elif isinstance(v, (np.integer,)):
+            new_dict[k] = int(v)
+        elif isinstance(v, (np.floating,)):
+            val = float(v)
+            new_dict[k] = None if (np.isnan(val) or np.isinf(val)) else val
+        elif isinstance(v, float) and (np.isnan(v) or np.isinf(v)):
+            new_dict[k] = None
+        elif isinstance(v, np.ndarray):
+            new_dict[k] = clean_dict_values(v.tolist())
+        elif isinstance(v, list):
+            cleaned = []
+            for x in v:
+                if isinstance(x, dict):
+                    cleaned.append(clean_dict_values(x))
+                elif isinstance(x, (np.bool_, np.bool)):
+                    cleaned.append(bool(x))
+                elif isinstance(x, (np.integer,)):
+                    cleaned.append(int(x))
+                elif isinstance(x, (np.floating,)):
+                    val = float(x)
+                    cleaned.append(None if (np.isnan(val) or np.isinf(val)) else val)
+                elif isinstance(x, float) and (np.isnan(x) or np.isinf(x)):
+                    cleaned.append(None)
+                elif isinstance(x, np.ndarray):
+                    cleaned.append(x.tolist())
+                else:
+                    cleaned.append(x)
+            new_dict[k] = cleaned
+        else:
+            new_dict[k] = v
     return new_dict
 
 # Inicializar
@@ -479,9 +512,15 @@ async def upload_file_v6(file: UploadFile = File(...), user_id: str = Depends(ge
         for col in df.columns:
             col_data = pd.to_numeric(df[col], errors='coerce')
             non_null = col_data.dropna()
+            n_missing = int(df[col].isna().sum())
+            total_rows = len(df)
+            
             if len(non_null) > 0:
                 descriptive[col] = {
                     "n": int(len(non_null)),
+                    "n_missing": n_missing,
+                    "pct_missing": round(n_missing / total_rows * 100, 1) if total_rows > 0 else 0,
+                    "pct_valid": round((total_rows - n_missing) / total_rows * 100, 1) if total_rows > 0 else 0,
                     "mean": round(float(np.mean(non_null)), 4),
                     "median": round(float(np.median(non_null)), 4),
                     "std": round(float(np.std(non_null, ddof=1)), 4),
@@ -494,6 +533,29 @@ async def upload_file_v6(file: UploadFile = File(...), user_id: str = Depends(ge
                     "kurtosis": round(float(pd.Series(non_null).kurtosis()), 4),
                     "median_iqr": f"{np.median(non_null):.2f} ({np.percentile(non_null, 25):.2f} - {np.percentile(non_null, 75):.2f})"
                 }
+            else:
+                # Categorical column
+                value_counts = df[col].value_counts()
+                cat_stats = {}
+                for g, count in value_counts.items():
+                    pct = round(count / len(df[col].dropna()) * 100, 1) if len(df[col].dropna()) > 0 else 0
+                    wilson = wilson_ci_proportion(int(count), int(len(df[col].dropna())))
+                    cat_stats[str(g)] = {
+                        "n": int(count),
+                        "pct": f"{pct}%",
+                        "wilson_ci": wilson
+                    }
+                descriptive[col] = {
+                    "type": "categorical",
+                    "n": int(len(df[col].dropna())),
+                    "n_missing": n_missing,
+                    "pct_missing": round(n_missing / total_rows * 100, 1) if total_rows > 0 else 0,
+                    "pct_valid": round((total_rows - n_missing) / total_rows * 100, 1) if total_rows > 0 else 0,
+                    "categories": cat_stats,
+                    "n_categories": len(value_counts)
+                }
+        
+        missing_summary = compute_missing_data_summary(df)
         
         return clean_dict_values({
             "filename": file.filename, 
@@ -501,7 +563,8 @@ async def upload_file_v6(file: UploadFile = File(...), user_id: str = Depends(ge
             "columns": df.columns.tolist(), 
             "summary": summary, 
             "data_preview": preview,
-            "descriptive_stats": descriptive
+            "descriptive_stats": descriptive,
+            "missing_data": missing_summary
         })
     except HTTPException: raise
     except Exception as e:
@@ -509,14 +572,14 @@ async def upload_file_v6(file: UploadFile = File(...), user_id: str = Depends(ge
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/data/analyze-protocol")
-async def analyze_protocol_v6(file: UploadFile = File(...)):
+async def analyze_protocol_v7(file: UploadFile = File(...)):
     contents = await file.read()
     try:
         if file.filename.endswith('.csv'): df = robust_read_csv(contents)
         else: df = robust_read_excel(contents)
         df = sanitize_df(df)
         
-        print(f"DEBUG: analyze_protocol_v6 -> File: {file.filename}, Shape: {df.shape}")
+        print(f"DEBUG: analyze_protocol_v7 -> File: {file.filename}, Shape: {df.shape}")
         
         if is_summary_table(df):
             msg = "Esta Planilha parece conter APENAS O RESUMO (Tabela de Frequência). O SciStat AI precisa dos MICRODADOS BRUTOS (onde cada linha é um paciente) para realizar correlações e testes estatísticos."
@@ -525,269 +588,1270 @@ async def analyze_protocol_v6(file: UploadFile = File(...)):
         
         ignore_patterns = r'\b(id|nº|nome|prontuario|data|sexo|registro|index|paciente|unidade|setor|atendimento)\b'
         
-        # 1. Identificar o Desfecho (Outcome) com maior probabilidade (Última coluna numérica ou categórica não-ID)
+        # ============================================================
+        # PASSO 1: Classificação detalhada de cada variável
+        # ============================================================
+        var_info = {}
+        for col in df.columns:
+            col_series = pd.to_numeric(df[col].astype(str).str.replace(',', '.'), errors='coerce')
+            unique_count = len(df[col].dropna().unique())
+            non_null = col_series.dropna()
+            is_numeric = not col_series.isna().all() and unique_count >= 5
+            
+            # Detectar ordinal (poucos valores numéricos sequenciais, ex: 1-5 Likert)
+            is_ordinal = False
+            if not is_numeric and unique_count <= 7 and unique_count >= 3:
+                numeric_vals = pd.to_numeric(df[col].astype(str).str.replace(',', '.'), errors='coerce').dropna()
+                if len(numeric_vals) > 0:
+                    sorted_unique = sorted(numeric_vals.unique())
+                    diffs = np.diff(sorted_unique)
+                    if len(diffs) > 0 and np.all(np.isclose(diffs, diffs[0], atol=0.5)):
+                        is_ordinal = True
+            
+            # Detectar binária
+            is_binary = not is_numeric and unique_count == 2
+            
+            # Teste de normalidade (Shapiro-Wilk) para variáveis numéricas
+            normality = None
+            if is_numeric and len(non_null) >= 3 and len(non_null) <= 5000:
+                try:
+                    _, shapiro_p = stats.shapiro(non_null.values)
+                    normality = "normal" if shapiro_p > 0.05 else "nao-normal"
+                except:
+                    normality = "unknown"
+            
+            var_info[col] = {
+                "is_numeric": is_numeric,
+                "is_ordinal": is_ordinal,
+                "is_binary": is_binary,
+                "unique_count": unique_count,
+                "n": int(len(non_null)) if is_numeric else int(len(df[col].dropna())),
+                "normality": normality,
+                "dtype": str(df[col].dtype)
+            }
+        
+        # ============================================================
+        # PASSO 2: Identificar pares de variáveis relacionadas
+        # ============================================================
+        # Detectar pares "antes/depois", "pre/post", "baseline/followup"
+        paired_keywords = {
+            'antes': ['depois', 'apos', 'pós', 'pos', 'final'],
+            'pre': ['pos', 'pós', 'post', 'follow'],
+            'baseline': ['follow', 'final', 'end'],
+            'inicio': ['fim', 'final', 'termino'],
+            'entrada': ['saida', 'alta'],
+            'controle': ['tratamento', 'intervenção', 'intervencao'],
+        }
+        
+        detected_pairs = []
+        cols_list = list(df.columns)
+        used_in_pair = set()
+        
+        for i, col_a in enumerate(cols_list):
+            for col_b in cols_list[i+1:]:
+                a_lower = col_a.lower().strip()
+                b_lower = col_b.lower().strip()
+                
+                for keyword, partners in paired_keywords.items():
+                    a_match = keyword in a_lower
+                    b_match = any(p in b_lower for p in partners)
+                    a_match_rev = keyword in b_lower
+                    b_match_rev = any(p in a_lower for p in partners)
+                    
+                    if (a_match and b_match) or (a_match_rev and b_match_rev):
+                        info_a = var_info.get(col_a, {})
+                        info_b = var_info.get(col_b, {})
+                        if info_a.get('is_numeric') and info_b.get('is_numeric'):
+                            detected_pairs.append({
+                                "col_a": col_a,
+                                "col_b": col_b,
+                                "test": "Teste T Pareado",
+                                "test_options": ["Teste T Pareado", "Wilcoxon Pareado", "Excluir"],
+                                "rationale": f"Variáveis pareadas detectadas ('{col_a}' vs '{col_b}'). Mesmo sujeito medido em dois momentos.",
+                                "type": "Pareado (antes/depois)"
+                            })
+                            used_in_pair.add(col_a)
+                            used_in_pair.add(col_b)
+                            break
+                if col_a in used_in_pair:
+                    break
+        
+        # ============================================================
+        # PASSO 3: Identificar correlações entre variáveis numéricas
+        # ============================================================
+        numeric_cols = [c for c in df.columns if var_info.get(c, {}).get('is_numeric') and c not in used_in_pair]
+        
+        correlation_pairs = []
+        for i, col_a in enumerate(numeric_cols):
+            for col_b in numeric_cols[i+1:]:
+                if col_b in used_in_pair:
+                    continue
+                a_name = col_a.lower()
+                b_name = col_b.lower()
+                
+                # Detectar correlações semanticamente óbvias
+                corr_keywords = {
+                    ('hora', 'nota'): {'test': 'Correlação de Pearson', 'rationale': 'Relação esperada entre tempo de estudo e desempenho.'},
+                    ('peso', 'peso'): {'test': 'Teste T Pareado', 'rationale': 'Comparação de peso antes e depois (pareado).'},
+                    ('idade', 'tempo'): {'test': 'Correlação de Spearman', 'rationale': 'Relação entre idade e tempo de recuperação.'},
+                    ('idade', 'nota'): {'test': 'Correlação de Pearson', 'rationale': 'Relação entre idade e desempenho.'},
+                    ('satisf', 'nota'): {'test': 'Correlação de Spearman', 'rationale': 'Relação entre satisfação (ordinal) e nota.'},
+                    ('satisf', 'peso'): {'test': 'Correlação de Spearman', 'rationale': 'Relação entre satisfação e peso.'},
+                }
+                
+                for (kw_a, kw_b), info in corr_keywords.items():
+                    if (kw_a in a_name and kw_b in b_name) or (kw_a in b_name and kw_b in a_name):
+                        test = info['test']
+                        # Se uma das variáveis for ordinal, forçar Spearman
+                        if var_info[col_a].get('is_ordinal') or var_info[col_b].get('is_ordinal'):
+                            test = 'Correlação de Spearman'
+                        # Se normalidade for não-normal, usar Spearman
+                        if var_info[col_a].get('normality') == 'nao-normal' or var_info[col_b].get('normality') == 'nao-normal':
+                            test = 'Correlação de Spearman'
+                        
+                        correlation_pairs.append({
+                            "col_a": col_a,
+                            "col_b": col_b,
+                            "test": test,
+                            "test_options": [test, "Correlação de Spearman", "Regressão Linear", "Excluir"],
+                            "rationale": info['rationale'],
+                            "type": "Correlação"
+                        })
+                        break
+        
+        # ============================================================
+        # PASSO 4: Identificar comparações de grupos (categórica vs numérica)
+        # ============================================================
+        categorical_cols = [c for c in df.columns if not var_info.get(c, {}).get('is_numeric') and not re.search(ignore_patterns, c.lower()) and var_info.get(c, {}).get('unique_count', 0) <= 10]
+        
+        group_comparisons = []
+        for cat_col in categorical_cols:
+            cat_unique = var_info[cat_col]['unique_count']
+            for num_col in numeric_cols:
+                if num_col in used_in_pair:
+                    continue
+                
+                # Verificar se já não está em uma correlação
+                already_in_corr = any(cp['col_a'] == num_col or cp['col_b'] == num_col for cp in correlation_pairs)
+                
+                normality_status = var_info[num_col].get('normality', 'unknown')
+                
+                if cat_unique == 2:
+                    if normality_status == 'normal':
+                        rec_test = 'Teste T Independente'
+                        opt_tests = ['Teste T Independente', 'Mann-Whitney U', 'Excluir']
+                    else:
+                        rec_test = 'Mann-Whitney U'
+                        opt_tests = ['Mann-Whitney U', 'Teste T Independente', 'Excluir']
+                elif cat_unique >= 3:
+                    if normality_status == 'normal':
+                        rec_test = 'ANOVA One-Way'
+                        opt_tests = ['ANOVA One-Way', 'Kruskal-Wallis H', 'Excluir']
+                    else:
+                        rec_test = 'Kruskal-Wallis H'
+                        opt_tests = ['Kruskal-Wallis H', 'ANOVA One-Way', 'Excluir']
+                else:
+                    continue
+                
+                group_comparisons.append({
+                    "predictor": cat_col,
+                    "outcome": num_col,
+                    "test": rec_test,
+                    "test_options": opt_tests,
+                    "rationale": f"Comparação de '{num_col}' entre {cat_unique} grupos de '{cat_col}'. Normalidade: {normality_status}.",
+                    "type": "Comparação de Grupos"
+                })
+        
+        # ============================================================
+        # PASSO 5: Montar protocolo final
+        # ============================================================
+        variables = []
+        var_id = 0
+        
+        # 5a. Pares pareados
+        for pair in detected_pairs:
+            var_id += 1
+            variables.append({
+                "id": f"V{var_id:03d}",
+                "name": f"{pair['col_a']} ↔ {pair['col_b']}",
+                "type": pair['type'],
+                "unique_count": 0,
+                "recommended_test": pair['test'],
+                "test_options": pair['test_options'],
+                "rationale": pair['rationale'],
+                "pair": {"col_a": pair['col_a'], "col_b": pair['col_b']}
+            })
+        
+        # 5b. Correlações
+        for pair in correlation_pairs:
+            var_id += 1
+            variables.append({
+                "id": f"V{var_id:03d}",
+                "name": f"{pair['col_a']} ↔ {pair['col_b']}",
+                "type": pair['type'],
+                "unique_count": 0,
+                "recommended_test": pair['test'],
+                "test_options": pair['test_options'],
+                "rationale": pair['rationale'],
+                "pair": {"col_a": pair['col_a'], "col_b": pair['col_b']}
+            })
+        
+        # 5c. Comparações de grupos
+        for comp in group_comparisons:
+            var_id += 1
+            variables.append({
+                "id": f"V{var_id:03d}",
+                "name": f"{comp['predictor']} → {comp['outcome']}",
+                "type": comp['type'],
+                "unique_count": var_info[comp['predictor']]['unique_count'],
+                "recommended_test": comp['test'],
+                "test_options": comp['test_options'],
+                "rationale": comp['rationale'],
+                "pair": {"predictor": comp['predictor'], "outcome": comp['outcome']}
+            })
+        
+        # 5d. Variáveis individuais descritivas (TODAS as variáveis, mesmo as usadas em pares)
+        for col in df.columns:
+            if re.search(ignore_patterns, col.lower()):
+                continue
+            vi = var_info.get(col, {})
+            var_id += 1
+            if vi.get('is_numeric'):
+                variables.append({
+                    "id": f"V{var_id:03d}",
+                    "name": col,
+                    "type": "Descritiva (Numérica)",
+                    "unique_count": vi['unique_count'],
+                    "recommended_test": "Estatística Descritiva",
+                    "test_options": ["Estatística Descritiva"],
+                    "rationale": f"Estatísticas descritivas de '{col}' (n={vi['n']}, normalidade: {vi.get('normality', '?')}).",
+                    "pair": {"col_a": col}
+                })
+            else:
+                variables.append({
+                    "id": f"V{var_id:03d}",
+                    "name": col,
+                    "type": "Descritiva (Categórica)",
+                    "unique_count": vi['unique_count'],
+                    "recommended_test": "Estatística Descritiva",
+                    "test_options": ["Estatística Descritiva", "Qui-Quadrado (X²)"],
+                    "rationale": f"Distribuição de frequências de '{col}' ({vi['unique_count']} categorias).",
+                    "pair": {"col_a": col}
+                })
+        
+        # 5e. Outcome sugerido (última coluna numérica relevante)
         candidate_cols = [c for c in df.columns if not re.search(ignore_patterns, c.lower())]
         outcome_suggested = candidate_cols[-1] if candidate_cols else df.columns[-1]
-        
-        # Determinar tipo do desfecho (Outcome)
-        # Tentar converter para numérico para ser mais resiliente
         outcome_series = pd.to_numeric(df[outcome_suggested].astype(str).str.replace(',', '.'), errors='coerce')
         is_outcome_numeric = not outcome_series.isna().all() and len(outcome_series.dropna().unique()) >= 5
         
-        variables = []
-        for col in df.columns:
-            if col == outcome_suggested: continue
-            
-            # Detecção Robusta de Tipo (Numérico vs Categórico)
-            col_series = pd.to_numeric(df[col].astype(str).str.replace(',', '.'), errors='coerce')
-            unique_count = len(df[col].dropna().unique())
-            is_col_numeric = not col_series.isna().all() and unique_count >= 5
-            
-            # Lógica Infallible de Sugestão (4 Quadrantes)
-            if re.search(ignore_patterns, col.lower()) and unique_count > (len(df) * 0.8):
-                rec, opt, rat = "Excluir", ["Excluir"], "Identificador único detectado (ID)."
-            
-            elif is_outcome_numeric and is_col_numeric:
-                # Quadrante 1: Numérico vs Numérico -> Spearman
-                rec = "Correlação de Spearman"
-                opt = ["Correlação de Spearman", "Regressão Linear", "Excluir"]
-                rat = "Análise de relação (Correlação) entre duas escalas numéricas."
-            
-            elif is_outcome_numeric and not is_col_numeric:
-                # Quadrante 2: Categórico (Preditor) vs Numérico (Desfecho) -> Mann-Whitney/Kruskal
-                if unique_count == 2:
-                    rec = "Mann-Whitney U"
-                    opt = ["Mann-Whitney U", "Teste T Independente", "Excluir"]
-                    rat = "Comparação de 2 grupos sobre o desfecho numérico."
-                else:
-                    rec = "Kruskal-Wallis H"
-                    opt = ["Kruskal-Wallis H", "ANOVA One-Way", "Excluir"]
-                    rat = "Comparação de múltiplos grupos (>2) sobre o desfecho numérico."
-            
-            elif not is_outcome_numeric and is_col_numeric:
-                # Quadrante 3: Numérico (Preditor) vs Categórico (Desfecho) -> Mann-Whitney (Invertido)
-                # Na prática clínica, compara-se o valor numérico entre os grupos do desfecho
-                outcome_unique = len(df[outcome_suggested].dropna().unique())
-                if outcome_unique == 2:
-                    rec = "Mann-Whitney U"
-                    opt = ["Mann-Whitney U", "Qui-Quadrado (X²)", "Excluir"]
-                    rat = "Comparação desta escala numérica entre os grupos do desfecho."
-                else:
-                    rec = "Kruskal-Wallis H"
-                    opt = ["Kruskal-Wallis H", "Qui-Quadrado (X²)", "Excluir"]
-                    rat = "Comparação da escala entre os múltiplos grupos do desfecho."
-            
-            else:
-                # Quadrante 4: Categórico vs Categórico -> Qui-Quadrado
-                rec = "Qui-Quadrado (X²)"
-                opt = ["Qui-Quadrado (X²)", "Excluir"]
-                rat = "Associação entre variáveis categóricas (Frequências)."
-
-            variables.append({
-                "name": col, 
-                "type": "Numérica" if is_col_numeric else "Categórica", 
-                "unique_count": int(unique_count), 
-                "recommended_test": rec, 
-                "test_options": opt, 
-                "rationale": rat
-            })
-            
-        # Desfecho no topo do Protocolo (Sempre como Descritiva)
         variables.insert(0, {
+            "id": "V000",
             "name": outcome_suggested,
             "type": "DESFECHO (Numérico)" if is_outcome_numeric else "DESFECHO (Categórico)",
-            "unique_count": int(len(df[outcome_suggested].unique())),
+            "unique_count": int(len(df[outcome_suggested].dropna().unique())),
             "recommended_test": "Estatística Descritiva",
             "test_options": ["Estatística Descritiva"],
-            "rationale": "Análise descritiva/perfil do desfecho principal selecionado."
+            "rationale": "Análise descritiva/perfil do desfecho principal selecionado.",
+            "pair": {"col_a": outcome_suggested}
         })
         
-        return clean_dict_values({"outcome": outcome_suggested, "protocol": variables})
+        # Metadata para o frontend saber que há pares inteligentes
+        meta = {
+            "total_pairs_detected": len(detected_pairs) + len(correlation_pairs) + len(group_comparisons),
+            "paired_tests": len(detected_pairs),
+            "correlation_tests": len(correlation_pairs),
+            "group_comparison_tests": len(group_comparisons),
+            "descriptive_only": len(variables) - len(detected_pairs) - len(correlation_pairs) - len(group_comparisons) - 1,
+        }
+        
+        return clean_dict_values({
+            "outcome": outcome_suggested,
+            "protocol": variables,
+            "meta": meta
+        })
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"ERR: Analyze Protocol -> {e}")
-        raise HTTPException(status_code=400, detail=str(e))
-        print(f"ERR: Analyze -> {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+        print(f"ERR: Analyze Protocol v7 -> {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=400, detail=f"Erro na análise do protocolo: {str(e)}")
+
+def compute_effect_size(test_type, **kwargs):
+    """Computa tamanhos de efeito apropriados para cada teste."""
+    try:
+        if test_type in ("ttest_paired", "wilcoxon"):
+            diff = kwargs.get("diff")
+            if diff is not None and len(diff) > 1:
+                std_diff = np.std(diff, ddof=1)
+                if std_diff > 0:
+                    cohens_d = float(np.mean(diff) / std_diff)
+                    return {"cohens_d": round(cohens_d, 4), "interpretation": interpret_cohens_d(cohens_d)}
+        elif test_type in ("ttest_ind", "mann_whitney"):
+            g1, g2 = kwargs.get("g1"), kwargs.get("g2")
+            if g1 is not None and g2 is not None:
+                n1, n2 = len(g1), len(g2)
+                s1, s2 = np.var(g1, ddof=1), np.var(g2, ddof=1)
+                s_pooled = np.sqrt(((n1-1)*s1 + (n2-1)*s2) / (n1+n2-2)) if (n1+n2-2) > 0 else 0
+                if s_pooled > 0:
+                    cohens_d = float((np.mean(g1) - np.mean(g2)) / s_pooled)
+                    return {"cohens_d": round(cohens_d, 4), "interpretation": interpret_cohens_d(cohens_d)}
+        elif test_type in ("anova", "kruskal"):
+            groups = kwargs.get("groups")
+            if groups and len(groups) >= 2:
+                all_vals = np.concatenate(groups)
+                grand_mean = np.mean(all_vals)
+                ss_between = sum(len(g) * (np.mean(g) - grand_mean)**2 for g in groups)
+                ss_within = sum(sum((x - np.mean(g))**2 for x in g) for g in groups)
+                ss_total = ss_between + ss_within
+                if ss_total > 0:
+                    eta_sq = float(ss_between / ss_total)
+                    return {"eta_squared": round(eta_sq, 4), "interpretation": interpret_eta_squared(eta_sq)}
+        elif test_type in ("pearson", "spearman"):
+            r = kwargs.get("r")
+            if r is not None:
+                r2 = float(r ** 2)
+                return {"r_squared": round(r2, 4), "interpretation": interpret_r_squared(r2)}
+        elif test_type in ("chi2",):
+            chi2_stat = kwargs.get("chi2")
+            n_total = kwargs.get("n_total")
+            if chi2_stat is not None and n_total and n_total > 0:
+                v = float(chi2_stat / n_total)
+                return {"cramers_v": round(v, 4), "interpretation": interpret_cramers_v(v)}
+    except:
+        pass
+    return None
+
+def interpret_cohens_d(d):
+    abs_d = abs(d)
+    if abs_d >= 0.8: return "Grande"
+    if abs_d >= 0.5: return "Médio"
+    if abs_d >= 0.2: return "Pequeno"
+    return "Desprezível"
+
+def interpret_eta_squared(eta):
+    if eta >= 0.14: return "Grande"
+    if eta >= 0.06: return "Médio"
+    if eta >= 0.01: return "Pequeno"
+    return "Desprezível"
+
+def interpret_r_squared(r2):
+    if r2 >= 0.81: return "Muito forte"
+    if r2 >= 0.49: return "Forte"
+    if r2 >= 0.25: return "Moderado"
+    if r2 >= 0.09: return "Fraco"
+    return "Muito fraco"
+
+def interpret_cramers_v(v):
+    if v >= 0.5: return "Forte"
+    if v >= 0.3: return "Moderado"
+    if v >= 0.1: return "Fraco"
+    return "Desprezível"
+
+def compute_ci_95(data):
+    """Calcula IC 95% da média."""
+    n = len(data)
+    if n < 2: return None
+    mean = np.mean(data)
+    se = np.std(data, ddof=1) / np.sqrt(n)
+    margin = 1.96 * se
+    return {"mean": round(float(mean), 4), "ci_lower": round(float(mean - margin), 4), "ci_upper": round(float(mean + margin), 4), "se": round(float(se), 4)}
+
+def wilson_ci_proportion(successes, n, confidence=0.95):
+    """Intervalo de confiança de Wilson para proporções."""
+    if n == 0: return {"proportion": 0, "ci_lower": 0, "ci_upper": 0, "pct": "0.0%", "ci_pct": "0.0% - 0.0%"}
+    p = successes / n
+    z = 1.96  # 95% CI
+    denom = 1 + z**2 / n
+    center = (p + z**2 / (2*n)) / denom
+    spread = z * np.sqrt((p*(1-p) + z**2/(4*n)) / n) / denom
+    lower = max(0, center - spread)
+    upper = min(1, center + spread)
+    return {
+        "proportion": round(float(p), 4),
+        "pct": f"{p*100:.1f}%",
+        "ci_lower": round(float(lower), 4),
+        "ci_upper": round(float(upper), 4),
+        "ci_pct": f"{lower*100:.1f}% - {upper*100:.1f}%",
+        "n": n,
+        "successes": int(successes)
+    }
+
+def compute_odds_ratio(contingency_df):
+    """Calcula Odds Ratio e Risk Ratio para tabela 2x2."""
+    if contingency_df.shape != (2, 2):
+        return None
+    try:
+        a = float(contingency_df.iloc[0, 0])
+        b = float(contingency_df.iloc[0, 1])
+        c = float(contingency_df.iloc[1, 0])
+        d = float(contingency_df.iloc[1, 1])
+        
+        if a == 0 or b == 0 or c == 0 or d == 0:
+            # Haldane correction
+            a += 0.5; b += 0.5; c += 0.5; d += 0.5
+        
+        or_val = (a * d) / (b * c)
+        log_or_se = np.sqrt(1/a + 1/b + 1/c + 1/d)
+        log_or = np.log(or_val)
+        or_lower = np.exp(log_or - 1.96 * log_or_se)
+        or_upper = np.exp(log_or + 1.96 * log_or_se)
+        
+        # Risk Ratio
+        risk1 = a / (a + b)
+        risk2 = c / (c + d)
+        if risk2 > 0:
+            rr = risk1 / risk2
+            log_rr_se = np.sqrt((1-a/(a+b))/(a) + (1-c/(c+d))/(c)) if a > 0 and c > 0 else None
+            if log_rr_se:
+                log_rr = np.log(rr)
+                rr_lower = np.exp(log_rr - 1.96 * log_rr_se)
+                rr_upper = np.exp(log_rr + 1.96 * log_rr_se)
+            else:
+                rr_lower, rr_upper = None, None
+        else:
+            rr, rr_lower, rr_upper = None, None, None
+        
+        return {
+            "odds_ratio": round(float(or_val), 4),
+            "or_ci_95": f"{or_lower:.2f} - {or_upper:.2f}",
+            "risk_ratio": round(float(rr), 4) if rr else None,
+            "rr_ci_95": f"{rr_lower:.2f} - {rr_upper:.2f}" if rr and rr_lower else None,
+            "interpretation": "Fator de risco (OR>1)" if or_val > 1 else ("Fator protetor (OR<1)" if or_val < 1 else "Sem associação (OR=1)")
+        }
+    except:
+        return None
+
+def compute_missing_data_summary(df):
+    """Resumo de dados faltantes por variável."""
+    missing = []
+    total = len(df)
+    for col in df.columns:
+        n_missing = int(df[col].isna().sum())
+        pct = (n_missing / total * 100) if total > 0 else 0
+        missing.append({
+            "variable": col,
+            "n_missing": n_missing,
+            "n_valid": total - n_missing,
+            "pct_missing": round(pct, 1),
+            "pct_valid": round(100 - pct, 1)
+        })
+    return missing
+
+def check_statistical_assumptions(test_type, **kwargs):
+    """Verifica pressupostos estatísticos e retorna warnings."""
+    warnings = []
+    
+    if test_type in ("ttest_paired", "ttest_ind"):
+        diff = kwargs.get("diff") or (kwargs.get("g1") - kwargs.get("g2")) if kwargs.get("g1") is not None and kwargs.get("g2") is not None else None
+        if diff is not None and len(diff) >= 3:
+            try:
+                _, shapiro_p = stats.shapiro(diff)
+                if shapiro_p < 0.05:
+                    warnings.append({
+                        "type": "normality_violation",
+                        "severity": "warning",
+                        "message": f"Os dados não seguem distribuição normal (Shapiro-Wilk p={shapiro_p:.4f} < 0.05). Considere usar teste não-paramétrico (Wilcoxon/Mann-Whitney).",
+                        "recommendation": "Wilcoxon Pareado" if test_type == "ttest_paired" else "Mann-Whitney U"
+                    })
+            except:
+                pass
+        
+        # Homogeneity of variance (Levene's test) for independent t-test
+        if test_type == "ttest_ind" and kwargs.get("g1") is not None and kwargs.get("g2") is not None:
+            try:
+                _, levene_p = stats.levene(kwargs["g1"], kwargs["g2"])
+                if levene_p < 0.05:
+                    warnings.append({
+                        "type": "homogeneity_violation",
+                        "severity": "warning",
+                        "message": f"Variâncias desiguais entre grupos (Levene p={levene_p:.4f}). Considere usar Welch's t-test ou Mann-Whitney.",
+                        "recommendation": "Mann-Whitney U"
+                    })
+            except:
+                pass
+        
+        # Sample size check
+        n = kwargs.get("n", 0)
+        if n > 0 and n < 30:
+            warnings.append({
+                "type": "small_sample",
+                "severity": "info",
+                "message": f"Amostra pequena (n={n} < 30). Resultados devem ser interpretados com cautela.",
+                "recommendation": None
+            })
+    
+    elif test_type in ("anova",):
+        groups = kwargs.get("groups", [])
+        if groups:
+            # Homogeneity of variance
+            try:
+                _, levene_p = stats.levene(*groups)
+                if levene_p < 0.05:
+                    warnings.append({
+                        "type": "homogeneity_violation",
+                        "severity": "warning",
+                        "message": f"Variâncias heterogêneas entre grupos (Levene p={levene_p:.4f}). Considere Kruskal-Wallis.",
+                        "recommendation": "Kruskal-Wallis H"
+                    })
+            except:
+                pass
+            
+            # Normality per group
+            for i, g in enumerate(groups):
+                if len(g) >= 3:
+                    try:
+                        _, sw_p = stats.shapiro(g)
+                        if sw_p < 0.05:
+                            warnings.append({
+                                "type": "normality_violation",
+                                "severity": "warning",
+                                "message": f"Grupo {i+1} não é normal (Shapiro-Wilk p={sw_p:.4f}). Considere Kruskal-Wallis.",
+                                "recommendation": "Kruskal-Wallis H"
+                            })
+                    except:
+                        pass
+            
+            # Sample size per group
+            for i, g in enumerate(groups):
+                if len(g) < 5:
+                    warnings.append({
+                        "type": "small_group",
+                        "severity": "warning",
+                        "message": f"Grupo {i+1} tem apenas n={len(g)} observações (< 5). Poder estatístico comprometido.",
+                        "recommendation": None
+                    })
+    
+    elif test_type in ("kruskal",):
+        groups = kwargs.get("groups", [])
+        if groups:
+            for i, g in enumerate(groups):
+                if len(g) < 5:
+                    warnings.append({
+                        "type": "small_group",
+                        "severity": "warning",
+                        "message": f"Grupo {i+1} tem apenas n={len(g)} observações.",
+                        "recommendation": None
+                    })
+    
+    elif test_type in ("chi2",):
+        expected = kwargs.get("expected")
+        if expected is not None:
+            if np.any(expected < 5):
+                warnings.append({
+                    "type": "expected_frequency_low",
+                    "severity": "warning",
+                    "message": "Células com frequência esperada < 5 detectadas. Qui-Quadrado pode ser impreciso. Considere Teste Exato de Fisher.",
+                    "recommendation": "Teste Exato de Fisher"
+                })
+    
+    return warnings
+
+def compute_post_hoc_anova(groups, group_names):
+    """Post-hoc pairwise comparisons após ANOVA significativa."""
+    results = []
+    n_comparisons = len(groups) * (len(groups) - 1) // 2
+    alpha_bonferroni = 0.05 / n_comparisons
+    
+    for i in range(len(groups)):
+        for j in range(i + 1, len(groups)):
+            g1, g2 = groups[i], groups[j]
+            if len(g1) >= 2 and len(g2) >= 2:
+                # Tukey-style pairwise t-test with Bonferroni
+                res = stats.ttest_ind(g1, g2)
+                p_corrected = min(res.pvalue * n_comparisons, 1.0)
+                
+                # Effect size
+                n1, n2 = len(g1), len(g2)
+                s1, s2 = np.var(g1, ddof=1), np.var(g2, ddof=1)
+                s_pooled = np.sqrt(((n1-1)*s1 + (n2-1)*s2) / (n1+n2-2)) if (n1+n2-2) > 0 else 0
+                cohens_d = float((np.mean(g1) - np.mean(g2)) / s_pooled) if s_pooled > 0 else 0
+                
+                results.append({
+                    "comparison": f"{group_names[i]} vs {group_names[j]}",
+                    "t_statistic": round(float(res.statistic), 4),
+                    "p_value_raw": round(float(res.pvalue), 6),
+                    "p_value_bonferroni": round(float(p_corrected), 6),
+                    "significant": p_corrected < 0.05,
+                    "cohens_d": round(cohens_d, 4),
+                    "effect_interpretation": interpret_cohens_d(cohens_d)
+                })
+    
+    return {"method": "Bonferroni", "alpha_adjustado": round(alpha_bonferroni, 6), "n_comparisons": n_comparisons, "comparisons": results}
+
+def compute_post_hoc_kruskal(groups, group_names):
+    """Post-hoc pairwise Mann-Whitney após Kruskal-Wallis significativo."""
+    results = []
+    n_comparisons = len(groups) * (len(groups) - 1) // 2
+    
+    for i in range(len(groups)):
+        for j in range(i + 1, len(groups)):
+            g1, g2 = groups[i], groups[j]
+            if len(g1) >= 1 and len(g2) >= 1:
+                res = stats.mannwhitneyu(g1, g2)
+                p_corrected = min(res.pvalue * n_comparisons, 1.0)
+                
+                results.append({
+                    "comparison": f"{group_names[i]} vs {group_names[j]}",
+                    "u_statistic": round(float(res.statistic), 4),
+                    "p_value_raw": round(float(res.pvalue), 6),
+                    "p_value_bonferroni": round(float(p_corrected), 6),
+                    "significant": p_corrected < 0.05
+                })
+    
+    return {"method": "Bonferroni", "alpha_adjustado": round(0.05 / n_comparisons, 6), "n_comparisons": n_comparisons, "comparisons": results}
+
+def estimate_achieved_power(test_type, **kwargs):
+    """Estima poder estatístico alcançado (aproximação)."""
+    try:
+        if test_type in ("ttest_paired", "ttest_ind"):
+            n = kwargs.get("n", 0)
+            d = kwargs.get("cohens_d", 0)
+            if n > 2 and d:
+                # Approximation using normal distribution
+                nc = abs(d) * np.sqrt(n / 2)
+                power = stats.norm.cdf(nc - 1.96)
+                return round(float(max(0, min(1, power))), 4)
+        
+        elif test_type in ("anova", "kruskal"):
+            groups = kwargs.get("groups", [])
+            if groups and len(groups) >= 2:
+                n_total = sum(len(g) for g in groups)
+                k = len(groups)
+                all_vals = np.concatenate(groups)
+                grand_mean = np.mean(all_vals)
+                ss_between = sum(len(g) * (np.mean(g) - grand_mean)**2 for g in groups)
+                ss_within = sum(sum((x - np.mean(g))**2 for x in g) for g in groups)
+                ss_total = ss_between + ss_within
+                f_sq = (ss_between / (k - 1)) / (ss_within / (n_total - k)) if ss_within > 0 and (n_total - k) > 0 else 0
+                if f_sq > 0 and n_total > k:
+                    nc = f_sq * (n_total - k)
+                    power = stats.ncf.cdf(stats.f.ppf(0.95, k-1, n_total-k), k-1, n_total-k, nc)
+                    return round(float(max(0, min(1, 1 - power))), 4)
+        
+        elif test_type in ("pearson", "spearman"):
+            n = kwargs.get("n", 0)
+            r = abs(kwargs.get("r", 0))
+            if n > 3 and r:
+                z = 0.5 * np.log((1 + r) / (1 - r))
+                se = 1 / np.sqrt(n - 3)
+                power = stats.norm.cdf(abs(z) * np.sqrt(n - 3) - 1.96)
+                return round(float(max(0, min(1, power))), 4)
+    except:
+        pass
+    return None
+
+def generate_interpretation(test_type, stat, p_val, effect_size=None, post_hoc=None):
+    """Gera interpretação em linguagem natural dos resultados."""
+    if p_val is None:
+        return None
+    
+    sig = p_val < 0.05
+    sig_str = "estatisticamente significativo" if sig else "não estatisticamente significativo"
+    
+    interpretations = []
+    
+    if test_type in ("ttest_paired", "wilcoxon"):
+        direction = "maior" if stat > 0 else "menor"
+        interpretations.append(f"O teste {test_type.replace('_', ' ')} revelou uma diferença {sig_str} (p={p_val:.4f}).")
+        if sig and stat:
+            interpretations.append(f"O grupo A é {direction} que o grupo B.")
+    
+    elif test_type in ("ttest_ind", "mann_whitney"):
+        interpretations.append(f"O teste revelou uma diferença {sig_str} entre os grupos (p={p_val:.4f}).")
+    
+    elif test_type in ("anova", "kruskal"):
+        interpretations.append(f"O teste revelou diferenças {sig_str} entre os grupos (p={p_val:.4f}).")
+        if sig and post_hoc:
+            sig_pairs = [c["comparison"] for c in post_hoc.get("comparisons", []) if c.get("significant")]
+            if sig_pairs:
+                interpretations.append(f"Comparações pós-hoc: diferenças significativas entre {', '.join(sig_pairs[:3])}.")
+    
+    elif test_type in ("pearson", "spearman"):
+        strength = "forte" if abs(stat) > 0.5 else "moderada" if abs(stat) > 0.3 else "fraca"
+        direction = "positiva" if stat > 0 else "negativa"
+        interpretations.append(f"Existe uma correlação {strength} e {direction} {sig_str} (r={stat:.4f}, p={p_val:.4f}).")
+    
+    elif test_type in ("chi2",):
+        interpretations.append(f"A associação entre as variáveis é {sig_str} (χ², p={p_val:.4f}).")
+    
+    if effect_size:
+        if "cohens_d" in effect_size:
+            interpretations.append(f"Tamanho do efeito: d={effect_size['cohens_d']:.2f} ({effect_size['interpretation']}).")
+        elif "eta_squared" in effect_size:
+            interpretations.append(f"Tamanho do efeito: η²={effect_size['eta_squared']:.4f} ({effect_size['interpretation']}).")
+        elif "r_squared" in effect_size:
+            interpretations.append(f"Variância explicada: R²={effect_size['r_squared']:.4f} ({effect_size['interpretation']}).")
+    
+    power = effect_size.get("achieved_power") if effect_size else None
+    if power is not None:
+        power_pct = power * 100
+        if power < 0.8:
+            interpretations.append(f"⚠ Poder estatístico alcançado: {power_pct:.0f}% (< 80%). Risco de erro tipo II (falso negativo).")
+        else:
+            interpretations.append(f"Poder estatístico alcançado: {power_pct:.0f}% (adequado).")
+    
+    return " ".join(interpretations)
+
+def decide_visualization(test_type, group_stats=None, n_groups=None):
+    """Decide o melhor tipo de visualização baseado no teste."""
+    if test_type in ("pearson", "spearman"):
+        return {"primary": "scatter", "secondary": "table"}
+    elif test_type in ("ttest_paired", "wilcoxon"):
+        return {"primary": "histogram", "secondary": "table"}
+    elif test_type in ("anova", "kruskal", "ttest_ind", "mann_whitney"):
+        if n_groups and n_groups > 5:
+            return {"primary": "table", "secondary": "boxplot"}
+        return {"primary": "boxplot", "secondary": "table"}
+    elif test_type in ("chi2",):
+        return {"primary": "table", "secondary": "bar"}
+    elif test_type in ("descriptive_num",):
+        return {"primary": "histogram", "secondary": "table"}
+    elif test_type in ("descriptive_cat",):
+        return {"primary": "bar", "secondary": "table"}
+    return {"primary": "table", "secondary": None}
 
 @app.post("/api/data/execute-protocol")
-async def execute_protocol_v6(file: UploadFile = File(...), protocol: str = Form(...), outcome: Optional[str] = Form(None), user_id: str = Depends(get_current_user)):
+async def execute_protocol_v8(file: UploadFile = File(...), protocol: str = Form(...), outcome: Optional[str] = Form(None), user_id: str = Depends(get_current_user)):
     contents = await file.read()
     record_telemetry("EXECUTE_" + file.filename, contents, protocol, outcome)
     try:
         protocol_list = json.loads(protocol)
         if file.filename.endswith('.csv'): df = robust_read_csv(contents)
-        else: df = pd.read_excel(io.BytesIO(contents))
+        else: df = robust_read_excel(io.BytesIO(contents))
         df = sanitize_df(df)
         
-        # Sincronizar desfecho (Outcome) com Fuzzy Matching
-        found_outcome = find_best_column_match(outcome, df.columns.tolist())
-        if found_outcome:
-            if found_outcome != outcome:
-                print(f"DEBUG: Matched Outcome '{outcome[:30]}...' -> '{found_outcome[:30]}...'")
-            outcome_col = found_outcome
-        else:
-            # Fallback se não encontrou o desfecho solicitado
-            print(f"WARNING: Outcome '{outcome}' not found. Using fallback.")
-            ignore_patterns = r'\b(id|nº|nome|data|prontuario)\b'
-            num_cols = [c for c in df.select_dtypes(include=[np.number]).columns if not re.search(ignore_patterns, c.lower())]
-            outcome_col = num_cols[-1] if num_cols else df.columns[-1]
-        
-        if outcome_col:
-            df[outcome_col] = pd.to_numeric(df[outcome_col], errors='coerce')
-            print(f"DEBUG: Outcome Final -> {outcome_col} (Nulls: {df[outcome_col].isna().sum()}/{len(df)})")
-
         results = []
+        errors_detected = []
+        
         for item in protocol_list:
             var_name = item.get("name")
             test = item.get("selected_test") or item.get("recommended_test")
-            if test == "Excluir" or var_name not in df.columns: continue
+            pair_info = item.get("pair", {})
             
-            # Limpeza de dados para este par
-            cols_to_use = [var_name]
-            if outcome_col and outcome_col != var_name: cols_to_use.append(outcome_col)
-            df_curr = df[cols_to_use].dropna()
+            if test == "Excluir":
+                continue
             
-            stat, p_val = None, None
-            median_val, iqr_val = None, None
-            group_stats = None
-            chart_data = None
-            desc = ""
-            if len(df_curr) >= 2:
-                var_data = df_curr[var_name].values
-                
-                # Auto-bin numeric columns with too many unique values (max 5 groups)
-                binned_series = None
-                is_binned = False
-                var_numeric = pd.to_numeric(df_curr[var_name], errors='coerce')
-                unique_numeric = var_numeric.dropna().nunique()
-                if unique_numeric > 5 and not var_numeric.isna().all():
-                    binned_series, is_binned = bin_numeric_groups(df_curr[var_name], max_bins=5)
-                    if is_binned:
-                        df_curr[var_name] = binned_series
-                        var_data = df_curr[var_name].values
-                        print(f"DEBUG: Binned '{var_name}' into {df_curr[var_name].nunique()} groups")
+            col_a = pair_info.get("col_a")
+            col_b = pair_info.get("col_b")
+            predictor = pair_info.get("predictor")
+            outcome_col_pair = pair_info.get("outcome")
+            
+            # ============================================================
+            # TIPO 1: Testes pareados e correlações (duas colunas numéricas)
+            # ============================================================
+            if col_a and col_b and col_a in df.columns and col_b in df.columns:
+                df_curr = df[[col_a, col_b]].dropna()
+                if len(df_curr) < 3:
+                    errors_detected.append({"test": var_name, "error": "Dados insuficientes (< 3 observações válidas)."})
+                    results.append({"testLabel": f"{var_name} ({test})", "statistic": None, "p_value": None, "median_iqr": None, "group_stats": None, "chart_data": None, "effect_size": None, "ci": None, "error": "Dados insuficientes.", "visualization": {"primary": "table", "secondary": None}})
+                    continue
                 
                 try:
-                    if outcome_col and outcome_col != var_name:
-                        outcome_data = pd.to_numeric(df_curr[outcome_col], errors='coerce').dropna()
-                        
-                        if ("Mann-Whitney" in test or "Kruskal" in test) and not pd.api.types.is_numeric_dtype(df_curr[outcome_col]):
-                            print(f"DEBUG: Auto-Switch to Chi-Square for {var_name}")
-                            test = f"Chi-Square Fallback ({test})"
-                        
-                        if "Mann-Whitney" in test:
-                            u_vals = sorted(list(set(var_data)))
-                            if len(u_vals) >= 2:
-                                g1 = df_curr[df_curr[var_name] == u_vals[0]][outcome_col].values
-                                g2 = df_curr[df_curr[var_name] == u_vals[1]][outcome_col].values
-                                if len(g1) >= 1 and len(g2) >= 1: 
-                                    res = stats.mannwhitneyu(g1, g2); stat, p_val = res.statistic, res.pvalue
-                        elif "Kruskal" in test:
-                            grps = [df_curr[df_curr[var_name] == v][outcome_col].values for v in set(var_data)]
-                            if len(grps) >= 2: 
-                                res = stats.kruskal(*grps); stat, p_val = res.statistic, res.pvalue
-                        elif "Spearman" in test: 
-                            res = stats.spearmanr(var_data, pd.to_numeric(df_curr[outcome_col], errors='coerce').values); stat, p_val = res.correlation, res.pvalue
-                        elif "Chi-Square" in test or "Qui-Quadrado" in test or "Fallback" in test:
-                            contingency = pd.crosstab(df_curr[var_name], df_curr[outcome_col])
-                            if not contingency.empty:
-                                chi2, p, dof, ex = stats.chi2_contingency(contingency)
-                                stat, p_val = chi2, p
-                        
-                        if len(outcome_data) > 0:
-                            median_val = float(np.median(outcome_data))
-                            q1 = float(np.percentile(outcome_data, 25))
-                            q3 = float(np.percentile(outcome_data, 75))
-                            iqr_val = f"{q1:.2f} - {q3:.2f}"
-                        
-                        # Per-group stats: median (IQR) + N for each group of the predictor
-                        unique_groups = sorted(df_curr[var_name].dropna().unique(), key=lambda x: str(x))
-                        group_stats = []
-                        for g in unique_groups:
-                            g_outcome = pd.to_numeric(df_curr[df_curr[var_name] == g][outcome_col], errors='coerce').dropna()
-                            if len(g_outcome) > 0:
-                                group_stats.append({
-                                    "group": str(g),
-                                    "n": int(len(g_outcome)),
-                                    "median": round(float(np.median(g_outcome)), 2),
-                                    "q1": round(float(np.percentile(g_outcome, 25)), 2),
-                                    "q3": round(float(np.percentile(g_outcome, 75)), 2),
-                                    "iqr": f"{np.percentile(g_outcome, 25):.2f} - {np.percentile(g_outcome, 75):.2f}",
-                                    "median_iqr": f"{np.median(g_outcome):.2f} ({np.percentile(g_outcome, 25):.2f} - {np.percentile(g_outcome, 75):.2f})"
-                                })
-                        
-                        # Bar chart data for this variable
-                        bar_labels = [g["group"] for g in group_stats]
-                        bar_medians = [g["median"] for g in group_stats]
-                        bar_q1 = [g["q1"] for g in group_stats]
-                        bar_q3 = [g["q3"] for g in group_stats]
-                        chart_data = {
-                            "type": "bar",
-                            "labels": bar_labels,
-                            "values": bar_medians,
-                            "q1": bar_q1,
-                            "q3": bar_q3,
-                            "var_name": var_name,
-                            "outcome": outcome_col
-                        }
+                    vals_a = pd.to_numeric(df_curr[col_a], errors='coerce').values
+                    vals_b = pd.to_numeric(df_curr[col_b], errors='coerce').values
                     
-                    elif "Descritiva" in test:
-                        numeric_vals = pd.to_numeric(var_data, errors='coerce').dropna()
-                        if len(numeric_vals) > 0:
-                            median_val = float(np.median(numeric_vals))
-                            q1 = float(np.percentile(numeric_vals, 25))
-                            q3 = float(np.percentile(numeric_vals, 75))
-                            iqr_val = f"{q1:.2f} - {q3:.2f}"
-                            stat = median_val
+                    if "T Pareado" in test:
+                        res = stats.ttest_rel(vals_a, vals_b)
+                        stat, p_val = res.statistic, res.pvalue
+                        diff = vals_a - vals_b
+                        median_val = float(np.median(diff))
+                        iqr_val = f"{np.percentile(diff, 25):.2f} - {np.percentile(diff, 75):.2f}"
+                        ci = compute_ci_95(diff)
+                        effect_size = compute_effect_size("ttest_paired", diff=diff)
+                        chart_data = {"type": "histogram", "values": [float(v) for v in diff], "var_name": f"Diferença ({col_a} - {col_b})"}
+                        viz = decide_visualization("ttest_paired")
+                        
+                    elif "Wilcoxon" in test:
+                        res = stats.wilcoxon(vals_a, vals_b)
+                        stat, p_val = res.statistic, res.pvalue
+                        diff = vals_a - vals_b
+                        median_val = float(np.median(diff))
+                        iqr_val = f"{np.percentile(diff, 25):.2f} - {np.percentile(diff, 75):.2f}"
+                        ci = compute_ci_95(diff)
+                        effect_size = compute_effect_size("wilcoxon", diff=diff)
+                        chart_data = {"type": "histogram", "values": [float(v) for v in diff], "var_name": f"Diferença ({col_a} - {col_b})"}
+                        viz = decide_visualization("wilcoxon")
+                        
+                    elif "Pearson" in test:
+                        res = stats.pearsonr(vals_a, vals_b)
+                        stat, p_val = res.statistic, res.pvalue
+                        median_val, iqr_val = None, None
+                        ci = None
+                        effect_size = compute_effect_size("pearson", r=stat)
+                        chart_data = {"type": "scatter", "x": [float(v) for v in vals_a], "y": [float(v) for v in vals_b], "var_name": f"{col_a} vs {col_b}"}
+                        viz = decide_visualization("pearson")
+                        
+                    elif "Spearman" in test:
+                        res = stats.spearmanr(vals_a, vals_b)
+                        stat, p_val = res.correlation, res.pvalue
+                        median_val, iqr_val = None, None
+                        ci = None
+                        effect_size = compute_effect_size("spearman", r=stat)
+                        chart_data = {"type": "scatter", "x": [float(v) for v in vals_a], "y": [float(v) for v in vals_b], "var_name": f"{col_a} vs {col_b}"}
+                        viz = decide_visualization("spearman")
+                        
+                    else:
+                        res = stats.spearmanr(vals_a, vals_b)
+                        stat, p_val = res.correlation, res.pvalue
+                        median_val, iqr_val = None, None
+                        ci = None
+                        effect_size = compute_effect_size("spearman", r=stat)
+                        chart_data = {"type": "scatter", "x": [float(v) for v in vals_a], "y": [float(v) for v in vals_b], "var_name": f"{col_a} vs {col_b}"}
+                        viz = decide_visualization("spearman")
+                    
+                    # Assumptions + Power + Interpretation
+                    if "T Pareado" in test:
+                        assumptions = check_statistical_assumptions("ttest_paired", diff=vals_a - vals_b, n=len(vals_a))
+                        if effect_size and "cohens_d" in effect_size:
+                            power = estimate_achieved_power("ttest_paired", n=len(vals_a), cohens_d=effect_size["cohens_d"])
+                            if power: effect_size["achieved_power"] = power
+                    elif "Wilcoxon" in test:
+                        assumptions = check_statistical_assumptions("wilcoxon", diff=vals_a - vals_b, n=len(vals_a))
+                    elif "Pearson" in test:
+                        assumptions = check_statistical_assumptions("pearson", n=len(vals_a))
+                        if effect_size and "r_squared" in effect_size:
+                            power = estimate_achieved_power("pearson", n=len(vals_a), r=stat)
+                            if power: effect_size["achieved_power"] = power
+                    else:
+                        assumptions = check_statistical_assumptions("spearman", n=len(vals_a))
+                        if effect_size and "r_squared" in effect_size:
+                            power = estimate_achieved_power("spearman", n=len(vals_a), r=stat)
+                            if power: effect_size["achieved_power"] = power
+                    
+                    interp_test = "ttest_paired" if "T Pareado" in test else "wilcoxon" if "Wilcoxon" in test else "pearson" if "Pearson" in test else "spearman"
+                    interpretation = generate_interpretation(interp_test, stat, p_val, effect_size)
+                    
+                    result_item = {
+                        "testLabel": f"{var_name} ({test})",
+                        "statistic": round(float(stat), 4) if stat is not None else None,
+                        "p_value": round(float(p_val), 4) if p_val is not None else None,
+                        "median_iqr": f"{median_val:.2f} ({iqr_val})" if median_val is not None else None,
+                        "group_stats": None,
+                        "chart_data": chart_data,
+                        "effect_size": effect_size,
+                        "ci": ci,
+                        "assumptions": assumptions,
+                        "interpretation": interpretation,
+                        "visualization": viz
+                    }
+                    results.append(result_item)
+                    
+                except Exception as e:
+                    err_msg = str(e)
+                    print(f"MATH ERR {var_name} ({test}): {err_msg}")
+                    errors_detected.append({"test": var_name, "error": err_msg})
+                    try:
+                        vals_a = pd.to_numeric(df[col_a], errors='coerce').dropna().values
+                        vals_b = pd.to_numeric(df[col_b], errors='coerce').dropna().values
+                        min_len = min(len(vals_a), len(vals_b))
+                        if min_len >= 3:
+                            res = stats.spearmanr(vals_a[:min_len], vals_b[:min_len])
+                            results.append({"testLabel": f"{var_name} (Spearman - fallback)", "statistic": round(float(res.correlation), 4), "p_value": round(float(res.pvalue), 4), "median_iqr": None, "group_stats": None, "chart_data": {"type": "scatter", "x": vals_a[:min_len].tolist(), "y": vals_b[:min_len].tolist(), "var_name": var_name}, "effect_size": compute_effect_size("spearman", r=res.correlation), "ci": None, "recovered": True, "visualization": {"primary": "scatter", "secondary": "table"}})
+                            continue
+                    except:
+                        pass
+                    results.append({"testLabel": f"{var_name} ({test})", "statistic": None, "p_value": None, "median_iqr": None, "group_stats": None, "chart_data": None, "effect_size": None, "ci": None, "error": f"Falha no cálculo: {err_msg[:150]}", "visualization": {"primary": "table", "secondary": None}})
+            
+            # ============================================================
+            # TIPO 2: Comparações de grupos (predictor categórico → outcome numérico)
+            # ============================================================
+            elif predictor and outcome_col_pair and predictor in df.columns and outcome_col_pair in df.columns:
+                df_curr = df[[predictor, outcome_col_pair]].dropna()
+                if len(df_curr) < 2:
+                    errors_detected.append({"test": var_name, "error": "Dados insuficientes."})
+                    results.append({"testLabel": f"{var_name} ({test})", "statistic": None, "p_value": None, "median_iqr": None, "group_stats": None, "chart_data": None, "effect_size": None, "ci": None, "error": "Dados insuficientes.", "visualization": {"primary": "table", "secondary": None}})
+                    continue
+                
+                try:
+                    outcome_data = pd.to_numeric(df_curr[outcome_col_pair], errors='coerce').dropna()
+                    unique_groups = sorted(df_curr[predictor].dropna().unique(), key=lambda x: str(x))
+                    n_groups = len(unique_groups)
+                    
+                    # Per-group stats COMPLETO
+                    group_stats = []
+                    group_values = {}
+                    total_n = len(df_curr)
+                    for g in unique_groups:
+                        g_outcome = pd.to_numeric(df_curr[df_curr[predictor] == g][outcome_col_pair], errors='coerce').dropna().values
+                        if len(g_outcome) > 0:
+                            ci = compute_ci_95(g_outcome)
+                            pct_of_total = round(len(g_outcome) / total_n * 100, 1)
+                            group_stats.append({
+                                "group": str(g),
+                                "n": int(len(g_outcome)),
+                                "pct_of_total": f"{pct_of_total}%",
+                                "mean": round(float(np.mean(g_outcome)), 4),
+                                "median": round(float(np.median(g_outcome)), 4),
+                                "std": round(float(np.std(g_outcome, ddof=1)), 4),
+                                "q1": round(float(np.percentile(g_outcome, 25)), 4),
+                                "q3": round(float(np.percentile(g_outcome, 75)), 4),
+                                "min": round(float(np.min(g_outcome)), 4),
+                                "max": round(float(np.max(g_outcome)), 4),
+                                "iqr": round(float(np.percentile(g_outcome, 75) - np.percentile(g_outcome, 25)), 4),
+                                "ci_95": ci,
+                                "median_iqr": f"{np.median(g_outcome):.2f} ({np.percentile(g_outcome, 25):.2f} - {np.percentile(g_outcome, 75):.2f})"
+                            })
+                            group_values[str(g)] = g_outcome
+                    
+                    # Chart data: MEDIAS do outcome por grupo (com error bars)
+                    bar_labels = [g["group"] for g in group_stats]
+                    bar_means = [g["mean"] for g in group_stats]
+                    bar_stds = [g["std"] for g in group_stats]
+                    chart_data = {
+                        "type": "bar",
+                        "labels": bar_labels,
+                        "values": bar_means,
+                        "stds": bar_stds,
+                        "q1": [g["q1"] for g in group_stats],
+                        "q3": [g["q3"] for g in group_stats],
+                        "var_name": var_name,
+                        "outcome": outcome_col_pair
+                    }
+                    
+                    stat, p_val = None, None
+                    effect_size = None
+                    
+                    if "T Independente" in test or "Teste T" in test:
+                        if n_groups == 2:
+                            g1 = group_values.get(str(unique_groups[0]), np.array([]))
+                            g2 = group_values.get(str(unique_groups[1]), np.array([]))
+                            if len(g1) >= 2 and len(g2) >= 2:
+                                res = stats.ttest_ind(g1, g2)
+                                stat, p_val = res.statistic, res.pvalue
+                                effect_size = compute_effect_size("ttest_ind", g1=g1, g2=g2)
+                            else:
+                                raise ValueError("Grupos com menos de 2 observações cada.")
+                        else:
+                            test = "ANOVA One-Way (auto-switch)"
+                            all_groups = [group_values[str(g)] for g in unique_groups if len(group_values.get(str(g), [])) >= 2]
+                            if len(all_groups) >= 2:
+                                res = stats.f_oneway(*all_groups)
+                                stat, p_val = res.statistic, res.pvalue
+                                effect_size = compute_effect_size("anova", groups=all_groups)
+                            else:
+                                raise ValueError("Grupos insuficientes para ANOVA.")
+                    
+                    elif "Mann-Whitney" in test:
+                        if n_groups == 2:
+                            g1 = group_values.get(str(unique_groups[0]), np.array([]))
+                            g2 = group_values.get(str(unique_groups[1]), np.array([]))
+                            if len(g1) >= 1 and len(g2) >= 1:
+                                res = stats.mannwhitneyu(g1, g2)
+                                stat, p_val = res.statistic, res.pvalue
+                                effect_size = compute_effect_size("mann_whitney", g1=g1, g2=g2)
+                            else:
+                                raise ValueError("Grupos com menos de 1 observação.")
+                        else:
+                            test = "Kruskal-Wallis H (auto-switch)"
+                            all_groups = [group_values[str(g)] for g in unique_groups if len(group_values.get(str(g), [])) >= 1]
+                            if len(all_groups) >= 2:
+                                res = stats.kruskal(*all_groups)
+                                stat, p_val = res.statistic, res.pvalue
+                                effect_size = compute_effect_size("kruskal", groups=all_groups)
+                            else:
+                                raise ValueError("Grupos insuficientes.")
+                    
+                    elif "ANOVA" in test:
+                        all_groups = [group_values[str(g)] for g in unique_groups if len(group_values.get(str(g), [])) >= 2]
+                        if len(all_groups) >= 2:
+                            res = stats.f_oneway(*all_groups)
+                            stat, p_val = res.statistic, res.pvalue
+                            effect_size = compute_effect_size("anova", groups=all_groups)
+                        else:
+                            raise ValueError("Grupos insuficientes para ANOVA.")
+                    
+                    elif "Kruskal" in test:
+                        all_groups = [group_values[str(g)] for g in unique_groups if len(group_values.get(str(g), [])) >= 1]
+                        if len(all_groups) >= 2:
+                            res = stats.kruskal(*all_groups)
+                            stat, p_val = res.statistic, res.pvalue
+                            effect_size = compute_effect_size("kruskal", groups=all_groups)
+                        else:
+                            raise ValueError("Grupos insuficientes para Kruskal-Wallis.")
+                    
+                    elif "Qui-Quadrado" in test or "Chi-Square" in test:
+                        contingency = pd.crosstab(df_curr[predictor], df_curr[outcome_col_pair])
+                        if not contingency.empty:
+                            chi2, p, dof, ex = stats.chi2_contingency(contingency)
+                            stat, p_val = chi2, p
+                            effect_size = compute_effect_size("chi2", chi2=chi2, n_total=int(contingency.sum().sum()))
+                            
+                            # Adicionar porcentagens na tabela de contingência
+                            contingency_pct = pd.crosstab(df_curr[predictor], df_curr[outcome_col_pair], normalize='index') * 100
+                            contingency_total = pd.crosstab(df_curr[predictor], df_curr[outcome_col_pair], margins=True)
+                            
+                            # Montar tabela formatada com %
+                            contingency_table = []
+                            for idx in contingency.index:
+                                row = {"row_label": str(idx)}
+                                for col in contingency.columns:
+                                    count = int(contingency.loc[idx, col])
+                                    pct = round(float(contingency_pct.loc[idx, col]), 1)
+                                    row[str(col)] = {"count": count, "pct": f"{pct}%"}
+                                row["total"] = int(contingency_total.loc[idx].iloc[-1])
+                                row["total_pct"] = f"{round(int(contingency_total.loc[idx].iloc[-1]) / len(df_curr) * 100, 1)}%"
+                                contingency_table.append(row)
+                            
+                            # Odds Ratio se tabela 2x2
+                            odds_ratio_data = None
+                            if contingency.shape == (2, 2):
+                                odds_ratio_data = compute_odds_ratio(contingency)
+                            
                             chart_data = {
-                                "type": "histogram",
-                                "values": [float(v) for v in numeric_vals],
+                                "type": "contingency_table",
+                                "table": contingency_table,
+                                "predictor": predictor,
+                                "outcome": outcome_col_pair,
                                 "var_name": var_name
                             }
-                except Exception as e: 
-                    print(f"MATH ERR {var_name} ({test}): {e}")
+                            
+                            # Guardar na resposta
+                            viz = decide_visualization("chi2")
+                            result_item = {
+                                "testLabel": f"{var_name} ({test})",
+                                "statistic": round(float(stat), 4) if stat is not None else None,
+                                "p_value": round(float(p_val), 4) if p_val is not None else None,
+                                "median_iqr": None,
+                                "group_stats": None,
+                                "chart_data": chart_data,
+                                "effect_size": effect_size,
+                                "ci": None,
+                                "contingency_table": contingency_table,
+                                "odds_ratio": odds_ratio_data,
+                                "visualization": viz
+                            }
+                            results.append(result_item)
+                            continue
+                        else:
+                            raise ValueError("Tabela de contingência vazia.")
+                    
+                    else:
+                        all_groups = [group_values[str(g)] for g in unique_groups if len(group_values.get(str(g), [])) >= 1]
+                        if len(all_groups) >= 2:
+                            res = stats.kruskal(*all_groups)
+                            stat, p_val = res.statistic, res.pvalue
+                            test = f"Kruskal-Wallis H (fallback)"
+                            effect_size = compute_effect_size("kruskal", groups=all_groups)
+                        else:
+                            raise ValueError(f"Teste não reconhecido: {test}")
+                    
+                    median_val = float(np.median(outcome_data)) if len(outcome_data) > 0 else None
+                    q1 = float(np.percentile(outcome_data, 25)) if len(outcome_data) > 0 else None
+                    q3 = float(np.percentile(outcome_data, 75)) if len(outcome_data) > 0 else None
+                    iqr_val = f"{q1:.2f} - {q3:.2f}" if q1 is not None else None
+                    ci_overall = compute_ci_95(outcome_data) if len(outcome_data) >= 2 else None
+                    
+                    # Post-hoc tests if ANOVA/Kruskal significant
+                    post_hoc = None
+                    if stat is not None and p_val is not None and p_val < 0.05 and n_groups >= 3:
+                        all_groups_list = [group_values[str(g)] for g in unique_groups if len(group_values.get(str(g), [])) >= 1]
+                        all_group_names = [str(g) for g in unique_groups if len(group_values.get(str(g), [])) >= 1]
+                        if "ANOVA" in test:
+                            post_hoc = compute_post_hoc_anova(all_groups_list, all_group_names)
+                        elif "Kruskal" in test:
+                            post_hoc = compute_post_hoc_kruskal(all_groups_list, all_group_names)
+                    
+                    # Assumptions checking
+                    assumptions = check_statistical_assumptions(
+                        "anova" if "ANOVA" in test else "kruskal" if "Kruskal" in test else "ttest_ind",
+                        groups=[group_values[str(g)] for g in unique_groups if len(group_values.get(str(g), [])) >= 1] if "ANOVA" in test or "Kruskal" in test else None,
+                        g1=group_values.get(str(unique_groups[0]), np.array([])) if n_groups == 2 else None,
+                        g2=group_values.get(str(unique_groups[1]), np.array([])) if n_groups == 2 else None,
+                        n=len(df_curr)
+                    )
+                    
+                    # Power estimation
+                    if effect_size:
+                        power_kwargs = {"n": len(df_curr)}
+                        if "ANOVA" in test or "Kruskal" in test:
+                            power_kwargs["groups"] = [group_values[str(g)] for g in unique_groups if len(group_values.get(str(g), [])) >= 1]
+                        elif n_groups == 2:
+                            power_kwargs["g1"] = group_values.get(str(unique_groups[0]), np.array([]))
+                            power_kwargs["g2"] = group_values.get(str(unique_groups[1]), np.array([]))
+                            if "cohens_d" in effect_size:
+                                power_kwargs["cohens_d"] = effect_size["cohens_d"]
+                        achieved_power = estimate_achieved_power(
+                            "anova" if "ANOVA" in test else "kruskal" if "Kruskal" in test else "ttest_ind",
+                            **power_kwargs
+                        )
+                        if achieved_power is not None:
+                            effect_size["achieved_power"] = achieved_power
+                    
+                    # Interpretation
+                    interpretation = generate_interpretation(
+                        "anova" if "ANOVA" in test else "kruskal" if "Kruskal" in test else "ttest_ind",
+                        stat, p_val, effect_size, post_hoc
+                    )
+                    
+                    viz = decide_visualization("anova" if "ANOVA" in test else "kruskal" if "Kruskal" in test else "ttest_ind", group_stats=group_stats, n_groups=n_groups)
+                    
+                    result_item = {
+                        "testLabel": f"{var_name} ({test})",
+                        "statistic": round(float(stat), 4) if stat is not None else None,
+                        "p_value": round(float(p_val), 4) if p_val is not None else None,
+                        "median_iqr": f"{median_val:.2f} ({iqr_val})" if median_val is not None and iqr_val else None,
+                        "group_stats": group_stats,
+                        "chart_data": chart_data,
+                        "effect_size": effect_size,
+                        "ci": ci_overall,
+                        "post_hoc": post_hoc,
+                        "assumptions": assumptions,
+                        "interpretation": interpretation,
+                        "visualization": viz
+                    }
+                    results.append(result_item)
+                    
+                except Exception as e:
+                    err_msg = str(e)
+                    print(f"MATH ERR {var_name} ({test}): {err_msg}")
+                    errors_detected.append({"test": var_name, "error": err_msg})
+                    try:
+                        unique_groups_f = sorted(df[[predictor, outcome_col_pair]].dropna()[predictor].dropna().unique(), key=lambda x: str(x))
+                        all_groups_f = [pd.to_numeric(df[df[predictor] == v][outcome_col_pair], errors='coerce').dropna().values for v in unique_groups_f]
+                        all_groups_f = [g for g in all_groups_f if len(g) >= 1]
+                        if len(all_groups_f) >= 2:
+                            res = stats.kruskal(*all_groups_f)
+                            results.append({"testLabel": f"{var_name} (Kruskal-Wallis - fallback)", "statistic": round(float(res.statistic), 4), "p_value": round(float(res.pvalue), 4), "median_iqr": None, "group_stats": None, "chart_data": None, "effect_size": compute_effect_size("kruskal", groups=all_groups_f), "ci": None, "recovered": True, "visualization": {"primary": "table", "secondary": "bar"}})
+                            continue
+                    except:
+                        pass
+                    results.append({"testLabel": f"{var_name} ({test})", "statistic": None, "p_value": None, "median_iqr": None, "group_stats": None, "chart_data": None, "effect_size": None, "ci": None, "error": f"Falha no cálculo: {err_msg[:150]}", "visualization": {"primary": "table", "secondary": None}})
             
-            label_suffix = " [faixas]" if is_binned else ""
-            result_item = {
-                "testLabel": f"{var_name}{label_suffix} ({test})", 
-                "statistic": round(float(stat), 4) if stat is not None else None, 
-                "p_value": round(float(p_val), 4) if p_val is not None else None,
-                "median_iqr": f"{median_val:.2f} ({iqr_val})" if median_val is not None and iqr_val else None,
-                "group_stats": group_stats,
-                "chart_data": chart_data
-            }
-            results.append(result_item)
-        print(f"DEBUG: Analysis complete, {len(results)} items in results.")
+            # ============================================================
+            # TIPO 3: Variável individual (descritiva)
+            # ============================================================
+            elif col_a and col_a in df.columns:
+                try:
+                    numeric_vals = pd.to_numeric(df[col_a], errors='coerce').dropna()
+                    
+                    if len(numeric_vals) > 0:
+                        median_val = float(np.median(numeric_vals))
+                        q1 = float(np.percentile(numeric_vals, 25))
+                        q3 = float(np.percentile(numeric_vals, 75))
+                        iqr_val = f"{q1:.2f} - {q3:.2f}"
+                        stat = median_val
+                        p_val = None
+                        ci = compute_ci_95(numeric_vals) if len(numeric_vals) >= 2 else None
+                        chart_data = {"type": "histogram", "values": [float(v) for v in numeric_vals], "var_name": col_a}
+                        
+                        unique_groups = sorted(df[col_a].dropna().unique(), key=lambda x: str(x))
+                        total_valid = len(numeric_vals)
+                        if len(unique_groups) <= 10:
+                            group_stats = []
+                            for g in unique_groups:
+                                g_count = int((df[col_a] == g).sum())
+                                pct = round(g_count / total_valid * 100, 1) if total_valid > 0 else 0
+                                group_stats.append({
+                                    "group": str(g), "n": g_count,
+                                    "pct": f"{pct}%",
+                                    "median": None, "q1": None, "q3": None, "iqr": None,
+                                    "median_iqr": f"n={g_count} ({pct}%)"
+                                })
+                        else:
+                            group_stats = None
+                        
+                        viz = decide_visualization("descriptive_num")
+                        
+                        # Normality + outliers for numeric descriptive
+                        assumptions = []
+                        if len(numeric_vals) >= 3:
+                            try:
+                                _, sw_p = stats.shapiro(numeric_vals)
+                                if sw_p < 0.05:
+                                    assumptions.append({"type": "non_normal", "severity": "info", "message": f"Distribuição não-normal (Shapiro-Wilk p={sw_p:.4f}). Mediana e IQR são mais robustos que média e DP.", "recommendation": None})
+                            except:
+                                pass
+                        
+                        # Outlier detection
+                        q1v, q3v = np.percentile(numeric_vals, 25), np.percentile(numeric_vals, 75)
+                        iqr_v = q3v - q1v
+                        lower_fence = q1v - 1.5 * iqr_v
+                        upper_fence = q3v + 1.5 * iqr_v
+                        outliers = numeric_vals[(numeric_vals < lower_fence) | (numeric_vals > upper_fence)]
+                        if len(outliers) > 0:
+                            outlier_pct = round(len(outliers) / len(numeric_vals) * 100, 1)
+                            assumptions.append({"type": "outliers_detected", "severity": "warning", "message": f"{len(outliers)} valores atípicos detectados ({outlier_pct}%): [{', '.join([f'{v:.2f}' for v in sorted(outliers)[:5]])}{'...' if len(outliers) > 5 else ''}]. Podem influenciar resultados.", "recommendation": None})
+                        
+                        result_item = {
+                            "testLabel": f"{var_name} ({test})",
+                            "statistic": round(float(stat), 4),
+                            "p_value": None,
+                            "median_iqr": f"{median_val:.2f} ({iqr_val})",
+                            "group_stats": group_stats,
+                            "chart_data": chart_data,
+                            "effect_size": None,
+                            "ci": ci,
+                            "assumptions": assumptions,
+                            "interpretation": f"Variável '{col_a}': n={len(numeric_vals)}, mediana={median_val:.2f}, IQR={iqr_val}, IC95%=[{ci['ci_lower']:.2f}, {ci['ci_upper']:.2f}]." if ci else None,
+                            "visualization": viz
+                        }
+                    else:
+                        value_counts = df[col_a].value_counts()
+                        total_n = len(df[col_a].dropna())
+                        group_stats = []
+                        for g, count in value_counts.items():
+                            pct = round(count / total_n * 100, 1) if total_n > 0 else 0
+                            wilson = wilson_ci_proportion(int(count), total_n)
+                            group_stats.append({
+                                "group": str(g),
+                                "n": int(count),
+                                "pct": f"{pct}%",
+                                "wilson_ci": wilson,
+                                "median": None, "q1": None, "q3": None, "iqr": None,
+                                "median_iqr": f"n={int(count)} ({pct}%, IC95%: {wilson['ci_pct']})"
+                            })
+                        
+                        bar_labels = [g["group"] for g in group_stats]
+                        bar_counts = [g["n"] for g in group_stats]
+                        bar_pcts = [float(g["pct"].replace("%", "")) for g in group_stats]
+                        chart_data = {"type": "bar", "labels": bar_labels, "values": bar_counts, "pcts": bar_pcts, "q1": [], "q3": [], "var_name": col_a}
+                        
+                        viz = decide_visualization("descriptive_cat")
+                        result_item = {
+                            "testLabel": f"{var_name} ({test})",
+                            "statistic": None, "p_value": None,
+                            "median_iqr": None,
+                            "group_stats": group_stats,
+                            "chart_data": chart_data,
+                            "effect_size": None, "ci": None,
+                            "visualization": viz
+                        }
+                    
+                    results.append(result_item)
+                    
+                except Exception as e:
+                    err_msg = str(e)
+                    print(f"MATH ERR {var_name} ({test}): {err_msg}")
+                    errors_detected.append({"test": var_name, "error": err_msg})
+                    results.append({"testLabel": f"{var_name} ({test})", "statistic": None, "p_value": None, "median_iqr": None, "group_stats": None, "chart_data": None, "effect_size": None, "ci": None, "error": f"Falha no cálculo: {err_msg[:150]}", "visualization": {"primary": "table", "secondary": None}})
+            
+            else:
+                errors_detected.append({"test": var_name, "error": "Coluna não encontrada no dataset."})
         
-        # Database save logic (Neon)
+        print(f"DEBUG: Analysis complete. {len(results)} results, {len(errors_detected)} errors.")
+        if errors_detected:
+            print(f"ERRORS: {json.dumps(errors_detected, ensure_ascii=False)}")
+        
         try:
             with Session(engine) as session:
-                record = AnalysisHistory(
-                    user_id=user_id,
-                    filename=file.filename,
-                    outcome=outcome if outcome else "Indefinido",
-                    protocol=protocol,
-                    results=json.dumps(results)
-                )
+                record = AnalysisHistory(user_id=user_id, filename=file.filename, outcome=outcome if outcome else "Indefinido", protocol=protocol, results=json.dumps(results))
                 session.add(record)
-                
-                # Criar Notificação Automática
-                notif = Notification(
-                    user_id=user_id,
-                    title="Análise Concluída",
-                    message=f"O dataset {file.filename} foi processado com sucesso.",
-                    type="success"
-                )
+                notif = Notification(user_id=user_id, title="Análise Concluída", message=f"O dataset {file.filename} foi processado com sucesso.", type="success")
                 session.add(notif)
-                
                 session.commit()
                 print(f"DATABASE: Resultado e Notificação salvos.")
         except Exception as db_err:
             print(f"DATABASE ERR: Falha ao salvar histórico -> {db_err}")
 
-        return clean_dict_values({"results": results})
+        return clean_dict_values({"results": results, "errors": errors_detected})
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"ERR: Execute -> {e}")
+        print(f"ERR: Execute v8 -> {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/data/summary-grouped")
@@ -1107,6 +2171,125 @@ async def extract_study(
         return {"raw_response": raw, "error": "Não foi possível parsear a resposta da IA. Extraia manualmente."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro na extração: {str(e)}")
+
+# ============================================================
+# Curva ROC / AUC
+# ============================================================
+
+def compute_roc_curve(labels, scores):
+    """Computes ROC curve (FPR, TPR, thresholds) and AUC from raw data."""
+    pairs = list(zip(scores, labels))
+    pairs.sort(key=lambda x: -x[0])
+    
+    n_pos = sum(1 for _, l in pairs if l == 1)
+    n_neg = sum(1 for _, l in pairs if l == 0)
+    
+    if n_pos == 0 or n_neg == 0:
+        raise ValueError("É necessário ter pelo menos um caso positivo (1) e um negativo (0).")
+    
+    tpr_list = [0.0]
+    fpr_list = [0.0]
+    thresholds = [pairs[0][0] + 1e-9]
+    
+    tp = 0
+    fp = 0
+    
+    for i, (score, label) in enumerate(pairs):
+        if label == 1:
+            tp += 1
+        else:
+            fp += 1
+        
+        tpr_list.append(tp / n_pos)
+        fpr_list.append(fp / n_neg)
+        if i < len(pairs) - 1:
+            thresholds.append((pairs[i][0] + pairs[i + 1][0]) / 2)
+    
+    auc = 0.0
+    for i in range(1, len(fpr_list)):
+        auc += (fpr_list[i] - fpr_list[i - 1]) * (tpr_list[i] + tpr_list[i - 1]) / 2
+    
+    return {
+        "fpr": [round(v, 6) for v in fpr_list],
+        "tpr": [round(v, 6) for v in tpr_list],
+        "thresholds": [round(v, 6) for v in thresholds],
+        "auc": round(auc, 6),
+        "n_pos": n_pos,
+        "n_neg": n_neg,
+        "n_total": n_pos + n_neg
+    }
+
+@app.post("/api/meta/roc")
+async def compute_roc(
+    file: Optional[UploadFile] = File(None),
+    score_column: Optional[str] = Form(None),
+    label_column: Optional[str] = Form(None),
+    data: Optional[str] = Form(None),
+    user_id: str = Depends(get_current_user)
+):
+    """Computes ROC curve and AUC from uploaded CSV or manual JSON data."""
+    try:
+        if file:
+            contents = await file.read()
+            if file.filename.endswith('.csv'):
+                df = robust_read_csv(contents)
+            else:
+                df = robust_read_excel(contents)
+            df = sanitize_df(df)
+            
+            if score_column and score_column not in df.columns:
+                raise HTTPException(status_code=400, detail=f"Coluna '{score_column}' não encontrada.")
+            if label_column and label_column not in df.columns:
+                raise HTTPException(status_code=400, detail=f"Coluna '{label_column}' não encontrada.")
+            
+            if not score_column:
+                num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+                score_column = num_cols[-1] if num_cols else df.columns[-1]
+            if not label_column:
+                cat_cols = [c for c in df.columns if c != score_column]
+                label_column = cat_cols[-1] if cat_cols else df.columns[0]
+            
+            scores = pd.to_numeric(df[score_column], errors='coerce').dropna().values
+            labels_raw = df[label_column].dropna().values
+            
+            label_map = {}
+            unique_labels = sorted(set(str(l) for l in labels_raw))
+            if len(unique_labels) != 2:
+                raise HTTPException(status_code=400, detail=f"A variável de desfecho deve ter exatamente 2 categorias. Encontradas: {unique_labels}")
+            label_map = {unique_labels[0]: 0, unique_labels[1]: 1}
+            labels = np.array([label_map.get(str(l), 0) for l in labels_raw])
+            
+            valid_mask = ~np.isnan(scores)
+            scores = scores[valid_mask]
+            labels = labels[valid_mask]
+            
+            result = compute_roc_curve(labels.tolist(), scores.tolist())
+            result["score_column"] = score_column
+            result["label_column"] = label_column
+            
+            return clean_dict_values(result)
+        
+        elif data:
+            raw = json.loads(data)
+            scores = raw.get("scores", [])
+            labels = raw.get("labels", [])
+            
+            if len(scores) != len(labels):
+                raise HTTPException(status_code=400, detail="Número de scores e labels deve ser igual.")
+            if len(scores) < 3:
+                raise HTTPException(status_code=400, detail="Mínimo de 3 observações necessário.")
+            
+            result = compute_roc_curve(labels, scores)
+            return clean_dict_values(result)
+        
+        else:
+            raise HTTPException(status_code=400, detail="Forneça um arquivo CSV ou dados JSON.")
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"ERR: ROC -> {e}")
+        raise HTTPException(status_code=400, detail=str(e))
 
 SYSTEM_PROMPT = """Você é o SciStat AI, um assistente especializado em bioestatística e análise de dados clínicos integrado à plataforma SciStat v4.
 
