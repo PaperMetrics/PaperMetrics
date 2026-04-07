@@ -11,6 +11,7 @@ import Archive from './pages/Archive'
 import Profile from './pages/Profile'
 import Settings from './pages/Settings'
 import Login from './pages/Login'
+import Register from './pages/Register'
 import { SciStatProvider } from './SciStatContext'
 import { AuthProvider } from './AuthContext'
 import ProtectedRoute from './components/ProtectedRoute'
@@ -38,6 +39,7 @@ function App() {
       <SciStatProvider>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
           
           <Route path="/" element={
             <ProtectedRoute>

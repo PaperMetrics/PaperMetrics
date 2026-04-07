@@ -537,18 +537,18 @@ export default function Dashboard() {
           <motion.section initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} className="grid lg:grid-cols-12 gap-8 items-start">
             <div className="lg:col-span-12 glass-card rounded-[2.5rem] overflow-hidden">
               <div className="p-8 border-b border-white/5 bg-white/2 flex items-center justify-between">
-                <h3 className="text-[11px] font-black uppercase tracking-[0.4em] text-slate-500">Relatório Consolidado</h3>
+                <h3 className="text-[11px] font-black uppercase tracking-[0.4em] text-text-muted">Relatório Consolidado</h3>
                 <span className="text-[9px] font-bold text-primary bg-primary/10 px-3 py-1 rounded-full border border-primary/20">{results.length} testes executados</span>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="bg-white/1">
-                      <th className="text-left px-6 py-5 font-black text-slate-500 uppercase text-[10px] tracking-widest">Variável / Teste</th>
-                      <th className="text-left px-6 py-5 font-black text-slate-500 uppercase text-[10px] tracking-widest">Mediana (IQR) por Grupo</th>
-                      <th className="text-right px-6 py-5 font-black text-slate-500 uppercase text-[10px] tracking-widest">Valor P</th>
-                      <th className="text-center px-6 py-5 font-black text-slate-500 uppercase text-[10px] tracking-widest">Sig.</th>
-                      <th className="text-center px-6 py-5 font-black text-slate-500 uppercase text-[10px] tracking-widest">Gráfico</th>
+                      <th className="text-left px-6 py-5 font-black text-text-muted uppercase text-[10px] tracking-widest">Variável / Teste</th>
+                      <th className="text-left px-6 py-5 font-black text-text-muted uppercase text-[10px] tracking-widest">Mediana (IQR) por Grupo</th>
+                      <th className="text-right px-6 py-5 font-black text-text-muted uppercase text-[10px] tracking-widest">Valor P</th>
+                      <th className="text-center px-6 py-5 font-black text-text-muted uppercase text-[10px] tracking-widest">Sig.</th>
+                      <th className="text-center px-6 py-5 font-black text-text-muted uppercase text-[10px] tracking-widest">Gráfico</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
@@ -556,13 +556,13 @@ export default function Dashboard() {
                       <tr key={i} className="hover:bg-primary/5 transition-colors group">
                         <td className="px-6 py-5">
                           <div className="flex flex-col gap-1">
-                            <span className="font-bold text-white group-hover:text-primary text-xs transition-colors">{r?.testLabel || r?.error}</span>
+                            <span className="font-bold text-text-main group-hover:text-primary text-xs transition-colors">{r?.testLabel || r?.error}</span>
                             {r?.group_stats && r.group_stats.length > 0 && (
                               <div className="flex flex-wrap gap-2 mt-1">
                                 {r.group_stats.map(g => (
                                   <span key={g.group} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white/5 rounded-lg border border-white/5">
                                     <span className="w-1.5 h-1.5 rounded-full bg-primary/60"></span>
-                                    <span className="text-[10px] font-bold text-slate-400">{g.group}</span>
+                                    <span className="text-[10px] font-bold text-text-muted">{g.group}</span>
                                     <span className="text-[9px] font-black text-primary bg-primary/10 px-1.5 py-0.5 rounded">N:{g.n}</span>
                                   </span>
                                 ))}
@@ -575,21 +575,21 @@ export default function Dashboard() {
                             {r?.group_stats && r.group_stats.length > 0 ? (
                               r.group_stats.map(g => (
                                 <div key={g.group} className="flex items-center gap-2">
-                                  <span className="text-[10px] font-bold text-slate-500 text-right">{g.group}:</span>
-                                  <span className="text-xs font-mono font-bold text-white">{g.median_iqr}</span>
+                                  <span className="text-[10px] font-bold text-text-muted text-right">{g.group}:</span>
+                                  <span className="text-xs font-mono font-bold text-text-main">{g.median_iqr}</span>
                                 </div>
                               ))
                             ) : (
-                              <span className="text-xs font-mono font-bold text-slate-400">{r?.median_iqr || '—'}</span>
+                              <span className="text-xs font-mono font-bold text-text-muted">{r?.median_iqr || '—'}</span>
                             )}
                           </div>
                         </td>
                         <td className="px-6 py-5 text-right font-mono">
-                          <span className={`font-black ${(r?.p_value != null && r.p_value < 0.05) ? 'text-primary' : 'text-slate-600'}`}>
+                          <span className={`font-black ${(r?.p_value != null && r.p_value < 0.05) ? 'text-primary' : 'text-text-muted'}`}>
                             {r?.p_value != null ? (r.p_value < 0.001 ? '<0.001' : r.p_value.toFixed(4)) : '—'}
                           </span>
                         </td>
-                        <td className="px-6 py-5 text-center"><span className={`text-[12px] font-black tracking-widest ${(r?.p_value != null && r.p_value < 0.05) ? 'text-primary' : 'text-slate-700'}`}>{significance(r?.p_value)}</span></td>
+                        <td className="px-6 py-5 text-center"><span className={`text-[12px] font-black tracking-widest ${(r?.p_value != null && r.p_value < 0.05) ? 'text-primary' : 'text-text-muted'}`}>{significance(r?.p_value)}</span></td>
                         <td className="px-6 py-5 text-center">
                           {r?.chart_data && (
                             <motion.button

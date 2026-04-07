@@ -1,79 +1,79 @@
-import { createContext, useContext, useEffect, useState, useRef } from 'react'
-import { createAuthClient } from '@neondatabase/auth'
+import { createContext, useContext, useEffect, useState } from 'react'
 
 const AuthContext = createContext()
 
-const authClient = createAuthClient(import.meta.env.VITE_NEON_AUTH_URL)
+const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000'
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
-  const [session, setSession] = useState(null)
   const [loading, setLoading] = useState(true)
-  const hasCheckedSession = useRef(false)
-
-  const fetchSession = async (retryCount = 0) => {
-    try {
-      const result = await authClient.getSession()
-      if (result.data?.session && result.data?.user) {
-        setSession(result.data.session)
-        setUser(result.data.user)
-      } else if (retryCount < 3) {
-        // Retry after callback redirect (session cookie may take a moment)
-        setTimeout(() => fetchSession(retryCount + 1), 500)
-        return
-      } else {
-        setSession(null)
-        setUser(null)
-      }
-    } catch (error) {
-      console.error('Session error:', error)
-      if (retryCount < 3) {
-        setTimeout(() => fetchSession(retryCount + 1), 500)
-        return
-      }
-    } finally {
-      if (retryCount >= 3 || hasCheckedSession.current) {
-        setLoading(false)
-      }
-      hasCheckedSession.current = true
-    }
-  }
 
   useEffect(() => {
-    fetchSession()
+    const token = localStorage.getItem('scistat-token')
+    if (!token) {
+      setLoading(false)
+      return
+    }
+    // Validar token com o backend
+    fetch(`${API_URL}/api/auth/me`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+      .then(res => {
+        if (!res.ok) throw new Error('invalid')
+        return res.json()
+      })
+      .then(data => setUser(data))
+      .catch(() => {
+        localStorage.removeItem('scistat-token')
+        setUser(null)
+      })
+      .finally(() => setLoading(false))
   }, [])
 
-  const signInWithGoogle = async () => {
-    try {
-      const result = await authClient.signIn.social({
-        provider: 'google',
-        callbackURL: window.location.origin + '/login'
-      })
-      if (result.error) throw result.error
-    } catch (error) {
-      console.error('Google Sign-In Error:', error)
-      throw error
-    }
+  const signInWithEmail = async (email, password) => {
+    const res = await fetch(`${API_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || 'Credenciais inválidas.')
+    localStorage.setItem('scistat-token', data.token)
+    setUser(data.user)
+    return data
   }
 
-  const signOut = async () => {
-    try {
-      await authClient.signOut()
-      setSession(null)
-      setUser(null)
-      window.location.href = '/'
-    } catch (error) {
-      console.error('Sign Out Error:', error)
-    }
+  const register = async (name, email, password) => {
+    const res = await fetch(`${API_URL}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, email, password })
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || 'Erro ao criar conta.')
+    localStorage.setItem('scistat-token', data.token)
+    setUser(data.user)
+    return data
   }
+
+  const signOut = () => {
+    localStorage.removeItem('scistat-token')
+    setUser(null)
+    window.location.href = '/login'
+  }
+
+  // Compatibilidade: componentes existentes usam session.sessionToken
+  const token = localStorage.getItem('scistat-token')
+  const session = token ? { sessionToken: token } : null
 
   const value = {
     user,
     session,
     loading,
-    signInWithGoogle,
+    signInWithEmail,
+    register,
     signOut,
-    isAuthenticated: !!session
+    isAuthenticated: !!user
   }
 
   return (

@@ -1,6 +1,8 @@
 import os
 import json
 import jwt
+import hashlib
+import secrets
 import requests
 import io
 import re
@@ -148,6 +150,29 @@ class Notification(SQLModel, table=True):
     is_read: bool = False
     created_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
 
+class User(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+    email: str = Field(unique=True, index=True)
+    password_hash: str
+    salt: str
+    created_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
+
+JWT_SECRET = os.getenv("JWT_SECRET", secrets.token_hex(32))
+
+def hash_password(password: str, salt: str) -> str:
+    return hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100_000).hex()
+
+def create_jwt(user_id: int, email: str, name: str) -> str:
+    payload = {
+        "sub": str(user_id),
+        "email": email,
+        "name": name,
+        "iat": datetime.datetime.utcnow(),
+        "exp": datetime.datetime.utcnow() + datetime.timedelta(days=30),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
 def create_db_and_tables():
     SQLModel.metadata.create_all(engine)
 
@@ -157,53 +182,39 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 auth_scheme = HTTPBearer()
 
 async def get_current_user(token: HTTPAuthorizationCredentials = Depends(auth_scheme)):
-    """Valida o JWT da Neon Auth e extrai o ID do usuário."""
+    """Valida JWT (local HS256 ou Neon Auth RS256) e extrai o ID do usuário."""
     try:
         creds = token.credentials
 
-        # Verificar se o token parece ser um JWT válido (3 segmentos separados por ponto)
         segments = creds.split('.')
         if len(segments) != 3:
-            # Token não é JWT - pode ser session token opaco do Neon Auth
-            # Extrair user_id de forma alternativa
             print(f"AUTH WARN: Token não é JWT (segmentos: {len(segments)}). Usando fallback.")
-            # Retornar o próprio token como user_id (funciona para desenvolvimento)
             return creds[:64] if creds else "anonymous"
 
-        # 1. Buscar as chaves públicas da Neon Auth (Cachear em produção)
-        jwks_url = f"{NEON_AUTH_URL}/.well-known/jwks.json"
-        jwks = requests.get(jwks_url).json()
+        # Tentar decodificar como JWT local (HS256) primeiro
+        try:
+            payload = jwt.decode(creds, JWT_SECRET, algorithms=["HS256"])
+            return payload.get("sub")
+        except jwt.InvalidTokenError:
+            pass  # Não é token local, tentar Neon Auth
 
-        # 2. Extrair o header do token para encontrar a chave correta (kid)
+        # Fallback: Neon Auth (RS256)
+        jwks_url = f"{NEON_AUTH_URL}/.well-known/jwks.json"
+        jwks = requests.get(jwks_url, timeout=5).json()
         unverified_header = jwt.get_unverified_header(creds)
         kid = unverified_header.get("kid")
 
-        # 3. Encontrar a chave pública correspondente
         rsa_key = {}
         for key in jwks["keys"]:
             if key["kid"] == kid:
-                rsa_key = {
-                    "kty": key["kty"],
-                    "kid": key["kid"],
-                    "n": key["n"],
-                    "e": key["e"]
-                }
+                rsa_key = {"kty": key["kty"], "kid": key["kid"], "n": key["n"], "e": key["e"]}
                 break
 
         if not rsa_key:
             raise HTTPException(status_code=401, detail="Chave pública não encontrada.")
 
-        # 4. Decodificar e validar o token
-        # Nota: O Better Auth/Neon Auth usa o 'sub' como ID do usuário
-        payload = jwt.decode(
-            creds,
-            rsa_key,
-            algorithms=["RS256"],
-            audience=None, # Neon Auth tokens podem não ter audience fixa por padrão
-            options={"verify_aud": False}
-        )
-
-        return payload.get("sub") # user_id
+        payload = jwt.decode(creds, rsa_key, algorithms=["RS256"], options={"verify_aud": False})
+        return payload.get("sub")
 
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expirado.")
@@ -212,7 +223,6 @@ async def get_current_user(token: HTTPAuthorizationCredentials = Depends(auth_sc
         return token.credentials[:64] if token.credentials else "anonymous"
     except Exception as e:
         print(f"AUTH ERR: {str(e)}")
-        # Fallback gracioso em vez de bloquear
         return token.credentials[:64] if token.credentials else "anonymous"
 
 app = FastAPI(title="SciStat API Pro", version="2.12.0")
@@ -242,6 +252,55 @@ async def security_headers(request, call_next):
     return response
 
 MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50MB
+
+# ============================================================
+# Auth local (email/senha)
+# ============================================================
+
+class RegisterRequest(BaseModel):
+    name: str
+    email: str
+    password: str
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+@app.post("/api/auth/register")
+async def register(body: RegisterRequest):
+    if len(body.password) < 6:
+        raise HTTPException(status_code=400, detail="Senha deve ter no mínimo 6 caracteres.")
+    with Session(engine) as session:
+        existing = session.exec(select(User).where(User.email == body.email)).first()
+        if existing:
+            raise HTTPException(status_code=409, detail="E-mail já cadastrado.")
+        salt = secrets.token_hex(16)
+        pw_hash = hash_password(body.password, salt)
+        user = User(name=body.name, email=body.email, password_hash=pw_hash, salt=salt)
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        token = create_jwt(user.id, user.email, user.name)
+        return {"token": token, "user": {"id": user.id, "name": user.name, "email": user.email}}
+
+@app.post("/api/auth/login")
+async def login(body: LoginRequest):
+    with Session(engine) as session:
+        user = session.exec(select(User).where(User.email == body.email)).first()
+        if not user:
+            raise HTTPException(status_code=401, detail="Credenciais inválidas.")
+        if hash_password(body.password, user.salt) != user.password_hash:
+            raise HTTPException(status_code=401, detail="Credenciais inválidas.")
+        token = create_jwt(user.id, user.email, user.name)
+        return {"token": token, "user": {"id": user.id, "name": user.name, "email": user.email}}
+
+@app.get("/api/auth/me")
+async def auth_me(user_id: str = Depends(get_current_user)):
+    with Session(engine) as session:
+        user = session.exec(select(User).where(User.id == int(user_id))).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="Usuário não encontrado.")
+        return {"id": user.id, "name": user.name, "email": user.email}
 
 # ============================================================
 # Utilitários de Telemetria e Blindagem (The Blackbox)

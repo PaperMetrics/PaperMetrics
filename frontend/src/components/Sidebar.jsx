@@ -78,15 +78,13 @@ function SidebarItem({ to, icon, label, index }) {
             />
           )}
           <motion.div
-            className="absolute left-0 w-1 h-6 bg-primary rounded-r-full"
+            className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-primary rounded-r-full"
             initial={{ opacity: 0, scaleY: 0 }}
-            animate={{ 
-              opacity: isHovered || isActive ? 1 : 0, 
+            animate={{
+              opacity: isHovered || isActive ? 1 : 0,
               scaleY: isHovered || isActive ? 1 : 0,
-              y: 0
             }}
             transition={{ duration: 0.2 }}
-            style={{ top: '50%', transform: 'translateY(-50%)' }}
           />
         </>
       )}

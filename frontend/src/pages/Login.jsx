@@ -1,12 +1,11 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../AuthContext'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 
 export default function Login() {
-  const { signInWithGoogle, isAuthenticated, loading: authLoading } = useAuth()
+  const { signInWithEmail, isAuthenticated, loading: authLoading } = useAuth()
   const [error, setError] = useState(null)
-  const [loading, setLoading] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [emailLoading, setEmailLoading] = useState(false)
@@ -18,17 +17,6 @@ export default function Login() {
     }
   }, [isAuthenticated, authLoading, navigate])
 
-  const handleGoogleLogin = async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      await signInWithGoogle()
-    } catch (err) {
-      setError('Falha ao autenticar com Google. Tente novamente.')
-      setLoading(false)
-    }
-  }
-
   const handleEmailLogin = async (e) => {
     e.preventDefault()
     if (!email.trim() || !password.trim()) {
@@ -38,23 +26,10 @@ export default function Login() {
     setEmailLoading(true)
     setError(null)
     try {
-      const API_URL = import.meta.env.VITE_API_BASE_URL
-      const res = await fetch(`${API_URL}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
-      })
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        throw new Error(data.error || 'Credenciais inválidas.')
-      }
-      const data = await res.json()
-      if (data.token) {
-        localStorage.setItem('scistat-token', data.token)
-        window.location.href = '/'
-      }
+      await signInWithEmail(email, password)
+      navigate('/', { replace: true })
     } catch (err) {
-      setError(err.message || 'Falha ao autenticar. Verifique suas credenciais.')
+      setError(err.message || 'Falha ao autenticar.')
     }
     setEmailLoading(false)
   }
@@ -86,29 +61,6 @@ export default function Login() {
         )}
 
         <div className="space-y-6">
-          <button
-            onClick={handleGoogleLogin}
-            disabled={loading}
-            className="w-full flex items-center justify-center gap-4 py-5 bg-white text-black font-black text-xs uppercase tracking-widest rounded-2xl hover:bg-slate-100 transition-all active:scale-95 disabled:opacity-50"
-          >
-            {loading ? (
-              <span className="flex items-center gap-2">
-                <div className="w-4 h-4 border-2 border-black/20 border-t-black rounded-full animate-spin"></div>
-                Conectando...
-              </span>
-            ) : (
-              <>
-                <img src="https://www.google.com/favicon.ico" className="w-5 h-5" alt="Google" />
-                Continuar com Google
-              </>
-            )}
-          </button>
-
-          <div className="relative py-4">
-            <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-white/5"></div></div>
-            <div className="relative flex justify-center text-[9px] font-black uppercase tracking-[0.3em] text-slate-600 bg-transparent px-4">ou entre com e-mail</div>
-          </div>
-
           <form onSubmit={handleEmailLogin} className="space-y-4">
              <input
                type="email"
@@ -129,9 +81,14 @@ export default function Login() {
                disabled={emailLoading}
                className="w-full py-4 bg-primary/10 border border-primary/20 text-primary font-black text-[10px] uppercase tracking-widest rounded-2xl hover:bg-primary/20 transition-all disabled:opacity-50"
              >
-               {emailLoading ? 'Autenticando...' : 'Entrar com Senha'}
+               {emailLoading ? 'Autenticando...' : 'Entrar'}
              </button>
           </form>
+
+          <p className="text-center text-slate-500 text-sm">
+            Não tem conta?{' '}
+            <Link to="/register" className="text-primary hover:underline font-semibold">Criar conta</Link>
+          </p>
         </div>
 
         <footer className="mt-12 pt-8 border-t border-white/5 text-center">
