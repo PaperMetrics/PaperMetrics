@@ -8,7 +8,7 @@ openpyxl
 scipy
 numpy
 sqlmodel
-google-generativeai
+openai
 statsmodels
 lifelines
 python-multipart

@@ -1,8 +1,14 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
+
+const GAP = 8
+const EDGE = 8
 
 export default function StatTooltip({ term, children }) {
   const [show, setShow] = useState(false)
-  
+  const triggerRef = useRef(null)
+  const [pos, setPos] = useState(null)
+
   const definitions = {
     'p-valor': 'O p-valor mede a probabilidade de obter resultados tão extremos quanto os observados, assumindo que não há efeito real (hipótese nula). p < 0.05 indica que o resultado é estatisticamente significativo — ou seja, improvável de ocorrer por acaso.',
     'p_value': 'O p-valor mede a probabilidade de obter resultados tão extremos quanto os observados, assumindo que não há efeito real (hipótese nula). p < 0.05 indica que o resultado é estatisticamente significativo.',
@@ -33,30 +39,85 @@ export default function StatTooltip({ term, children }) {
     'chi2': 'O teste Qui-Quadrado (χ²) verifica se existe associação entre duas variáveis categóricas. Compara frequências observadas com frequências esperadas sob independência.',
     'outlier': 'Valores atípicos (outliers) são observações que se desviam significativamente do padrão geral. Podem distorcer médias, desvios padrão e resultados de testes paramétricos.',
   }
-  
+
   const definition = definitions[term] || definitions[term.toLowerCase()] || children
-  
+
   if (!definition) return children || null
-  
+
+  function calc() {
+    const el = triggerRef.current
+    if (!el) return null
+
+    const r = el.getBoundingClientRect()
+    const vw = window.innerWidth
+    const vh = window.innerHeight
+
+    // Estimate tooltip height based on definition length
+    const charsPerLine = 55
+    const lines = Math.ceil(definition.length / charsPerLine)
+    const th = Math.min(40 + lines * 16, 350)
+    const tw = 300
+
+    let left = r.left + r.width / 2 - tw / 2
+    left = Math.max(EDGE, Math.min(left, vw - tw - EDGE))
+
+    const spaceAbove = r.top - GAP
+    const spaceBelow = vh - r.bottom - GAP
+
+    let top
+    if (spaceAbove >= th || spaceAbove > spaceBelow) {
+      top = r.top - GAP - th
+    } else {
+      top = r.bottom + GAP
+    }
+    top = Math.max(EDGE, Math.min(top, vh - th - EDGE))
+
+    return { top, left }
+  }
+
+  useEffect(() => {
+    if (!show) return
+    setPos(calc())
+    const handler = () => setPos(calc())
+    window.addEventListener('scroll', handler, true)
+    window.addEventListener('resize', handler)
+    return () => {
+      window.removeEventListener('scroll', handler, true)
+      window.removeEventListener('resize', handler)
+    }
+  }, [show])
+
+  const handleEnter = () => { setPos(calc()); setShow(true) }
+  const handleLeave = () => { setShow(false); setPos(null) }
+
   return (
-    <span
-      className="relative inline-flex items-center gap-1 cursor-help border-b border-dashed border-slate-600 hover:border-primary transition-colors"
-      onMouseEnter={() => setShow(true)}
-      onMouseLeave={() => setShow(false)}
-      onFocus={() => setShow(true)}
-      onBlur={() => setShow(false)}
-      tabIndex={0}
-    >
-      {children}
-      <span className="material-symbols-rounded text-[10px] text-slate-600 hover:text-primary transition-colors">help_outline</span>
-      
-      {show && (
-        <div className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-72 p-4 bg-slate-900/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl shadow-black/50 text-[11px] leading-relaxed text-slate-300 pointer-events-none">
-          <div className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 w-3 h-3 bg-slate-900/95 border-r border-b border-white/10 rotate-45"></div>
+    <>
+      <span
+        ref={triggerRef}
+        className="inline-flex items-center gap-1 cursor-help border-b border-dashed border-slate-600 hover:border-primary transition-colors"
+        onMouseEnter={handleEnter}
+        onMouseLeave={handleLeave}
+        onFocus={handleEnter}
+        onBlur={handleLeave}
+        tabIndex={0}
+      >
+        {children}
+        <span className="material-symbols-rounded text-[10px] text-slate-600 hover:text-primary transition-colors">help_outline</span>
+      </span>
+
+      {show && pos && createPortal(
+        <div
+          className="fixed z-[99999] w-[300px] p-4 bg-slate-900/98 backdrop-blur-xl border border-white/10 rounded-xl shadow-[0_20px_60px_rgba(0,0,0,0.7)] text-[11px] leading-relaxed text-slate-200 pointer-events-none"
+          style={{
+            top: `${pos.top}px`,
+            left: `${pos.left}px`,
+          }}
+        >
           <p className="font-bold text-primary text-[10px] uppercase tracking-wider mb-1">{term}</p>
           <p>{definition}</p>
-        </div>
+        </div>,
+        document.body
       )}
-    </span>
+    </>
   )
 }

@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from 'react'
+import { useState, useRef, useMemo, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useSciStat } from '../SciStatContext'
@@ -77,6 +77,36 @@ const STATISTICAL_TESTS = [
   { name: 'Teste de Cochran Q', icon: 'checklist', desc: 'Extensão do McNemar para 3+ grupos', category: 'Categórico' },
 ]
 
+// Helper: resolve the test-type category and return color tokens
+function getTestTypeBadge(testLabel) {
+  const label = (testLabel || '').toLowerCase()
+  if (label.includes('descritiva') || label.includes('desfecho') || label.includes('perfil')) {
+    return { label: 'Descritiva', bg: 'bg-blue-500/15', text: 'text-blue-400', border: 'border-blue-500/30' }
+  }
+  if (label.includes('pearson') || label.includes('spearman') || label.includes('correlação') || label.includes('correlacao')) {
+    return { label: 'Correlação', bg: 'bg-violet-500/15', text: 'text-violet-400', border: 'border-violet-500/30' }
+  }
+  if (label.includes('regressão') || label.includes('regressao') || label.includes('logística') || label.includes('logistica')) {
+    return { label: 'Regressão', bg: 'bg-amber-500/15', text: 'text-amber-400', border: 'border-amber-500/30' }
+  }
+  if (label.includes('anova') || label.includes('kruskal') || label.includes('mann-whitney') || label.includes('t independente') || label.includes('qui-quadrado') || label.includes('fisher')) {
+    return { label: 'Comparação', bg: 'bg-emerald-500/15', text: 'text-emerald-400', border: 'border-emerald-500/30' }
+  }
+  if (label.includes('pareado') || label.includes('wilcoxon')) {
+    return { label: 'Pareado', bg: 'bg-cyan-500/15', text: 'text-cyan-400', border: 'border-cyan-500/30' }
+  }
+  if (label.includes('shapiro') || label.includes('levene') || label.includes('normalidade')) {
+    return { label: 'Normalidade', bg: 'bg-rose-500/15', text: 'text-rose-400', border: 'border-rose-500/30' }
+  }
+  return { label: 'Teste', bg: 'bg-slate-700/40', text: 'text-slate-400', border: 'border-slate-600/30' }
+}
+
+// Helper: determine if p-value is N/A for a given test type
+function isPvalNA(testLabel) {
+  const label = (testLabel || '').toLowerCase()
+  return label.includes('descritiva') && !label.includes('desfecho') && !label.includes('perfil')
+}
+
 export default function Dashboard() {
   const { session, isAuthenticated } = useAuth()
   const { history, trials, loading: dataLoading } = useSciStat()
@@ -102,9 +132,21 @@ export default function Dashboard() {
   const [chartModal, setChartModal] = useState({ open: false, data: null, varName: '' })
   const [detailModal, setDetailModal] = useState(null)
   const [activeReportTab, setActiveReportTab] = useState('all')
+  const [expandedGroups, setExpandedGroups] = useState({})
   const [howToModal, setHowToModal] = useState(false)
   const [apaCopied, setApaCopied] = useState(null)  // stores testLabel of last copied
+  const [premiumAnalysis, setPremiumAnalysis] = useState(null)
+  const [premiumLoading, setPremiumLoading] = useState(false)
   const fileInputRef = useRef(null)
+  const premiumRef = useRef(null)
+
+  useEffect(() => {
+    if (premiumAnalysis && premiumRef.current) {
+      setTimeout(() => {
+        premiumRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }, 100)
+    }
+  }, [premiumAnalysis])
 
   /** Gera uma citação em formato APA-7 para um resultado estatístico */
   const generateApaText = (r) => {
@@ -139,7 +181,66 @@ export default function Dashboard() {
     setShowReview(false)
     setValidationReport(null)
     setActiveReportTab('all')
+    setPremiumAnalysis(null)
     if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  const runPremiumAnalysis = async () => {
+    if (!fileData) return
+    setPremiumLoading(true)
+    const headers = { 'Authorization': `Bearer ${session?.sessionToken}` }
+    const API_URL = import.meta.env.VITE_API_BASE_URL
+
+    try {
+      const formData = new FormData()
+      formData.append('file', fileData.formData.get('file'))
+      // The backend expects target_col: use numeric columns from results or outcome
+      const numericCol = results.find(r => r.p_value != null)?.testLabel?.split(' (')[0] || analysisProtocol?.outcome || ''
+      const targetCol = analysisProtocol?.outcome || numericCol
+      formData.append('target_col', targetCol)
+      if (analysisProtocol?.outcome) {
+        formData.append('group_col', analysisProtocol.outcome)
+      }
+
+      const res = await fetch(`${API_URL}/api/stats/premium-analysis`, {
+        method: 'POST',
+        headers,
+        body: formData
+      })
+
+      if (res.ok) {
+        const data = await res.json()
+        // Normalize response: backend returns {descriptive, tests, chart}
+        // Build a compatible structure for our display
+        const normalizedResults = (data.tests || []).map((t, i) => ({
+          label: t.test_name || `Análise ${i + 1}`,
+          insight_label: t.test_name || `Análise ${i + 1}`,
+          p_value: t.p_value ?? null,
+          statistic: t.stat_value ?? null,
+          effect_size: t.effect_size ?? 0,
+          interpretation: t.interpretation || 'N/A',
+        }))
+        setPremiumAnalysis({
+          results: normalizedResults,
+          descriptive: data.descriptive || null,
+          chart_b64: data.chart || null,
+          scientific_report: data.scientific_report || null,
+          summary: {
+            interpretation: data.descriptive
+              ? `Análise descritiva: Média ${data.descriptive.mean?.toFixed(2)}, Mediana ${data.descriptive.median?.toFixed(2)}, DP ${data.descriptive.std?.toFixed(2)}`
+              : 'Análise premium concluída.',
+            evidence_strength: normalizedResults.filter(r => r.p_value != null && r.p_value < 0.05).length / Math.max(normalizedResults.length, 1)
+          }
+        })
+      } else {
+        let errMsg = 'Erro desconhecido'
+        try { const errData = await res.json(); errMsg = errData.detail || errData.error || errMsg } catch {}
+        alert(`Erro na análise premium: ${errMsg}`)
+      }
+    } catch (err) {
+      alert(`Falha na análise premium: ${err.message}`)
+    }
+    setPremiumLoading(false)
   }
 
   const toggleTest = (id) => setSelectedTests(prev => ({ ...prev, [id]: !prev[id] }))
@@ -203,9 +304,17 @@ export default function Dashboard() {
 
   const handleProtocolOptionChange = (idx, newTest) => {
     setAnalysisProtocol(prev => {
-      const copy = { ...prev }
-      copy.items[idx] = { ...copy.items[idx], selected_test: newTest }
-      return copy
+      const items = [...prev.items]
+      items[idx] = { ...items[idx], recommended_test: newTest }
+      return { ...prev, items }
+    })
+  }
+
+  const toggleProtocolSelection = (idx) => {
+    setAnalysisProtocol(prev => {
+      const items = [...prev.items]
+      items[idx] = { ...items[idx], is_selected: !items[idx].is_selected }
+      return { ...prev, items }
     })
   }
 
@@ -220,7 +329,8 @@ export default function Dashboard() {
 
     try {
       const formData = fileData.formData
-      formData.set('protocol', JSON.stringify(analysisProtocol.items))
+      const selectedItems = analysisProtocol.items.filter(item => item.is_selected !== false);
+      formData.set('protocol', JSON.stringify(selectedItems))
       if (analysisProtocol?.outcome) {
         formData.set('outcome', analysisProtocol.outcome)
         formData.set('group_by', analysisProtocol.outcome)
@@ -482,6 +592,7 @@ export default function Dashboard() {
                 outcome={analysisProtocol?.outcome || 'Resultado'} 
                 outcomeOptions={outcomeOptions}
                 onOptionChange={handleProtocolOptionChange}
+                onToggleSelection={toggleProtocolSelection}
                 onOutcomeChange={handleOutcomeChange}
                 onConfirm={confirmProtocolAndRun}
               />
@@ -811,30 +922,53 @@ export default function Dashboard() {
                       <span className="material-symbols-rounded text-sm">add_circle</span>
                       Nova Análise
                     </button>
+
+                    <button
+                      onClick={runPremiumAnalysis}
+                      disabled={premiumLoading}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest transition-all ${
+                        premiumAnalysis 
+                          ? 'bg-primary/20 text-primary border border-primary/40' 
+                          : 'bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20'
+                      }`}
+                      title="Executar análise estatística avançada com detecção de padrões"
+                    >
+                      {premiumLoading ? (
+                        <motion.span 
+                          animate={{ rotate: 360 }} 
+                          transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+                          className="material-symbols-rounded text-sm"
+                        >
+                          progress_activity
+                        </motion.span>
+                      ) : (
+                        <span className="material-symbols-rounded text-sm">auto_awesome</span>
+                      )}
+                      {premiumAnalysis ? 'Análise Premium Concluída' : 'Análise Premium'}
+                    </button>
                   </div>
                 </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {[
-                    { key: 'descriptive', label: 'Descritivas', icon: 'description' },
-                    { key: 'all', label: 'Todos', icon: 'view_list' },
-                    { key: 'paired', label: 'Pareados', icon: 'compare_arrows' },
-                    { key: 'correlations', label: 'Correlações', icon: 'scatter_plot' },
-                    { key: 'comparisons', label: 'Comparações', icon: 'group_work' },
-                    { key: 'regressions', label: 'Regressões', icon: 'model_training' },
-                  ].map(tab => (
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/5">
+                      <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></div>
+                      <span className="text-[9px] font-black tracking-widest text-slate-500 uppercase">{results.length} TESTES</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
                     <button
-                      key={tab.key}
-                      onClick={() => setActiveReportTab(tab.key)}
-                      className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${
-                        activeReportTab === tab.key
-                          ? 'bg-primary/15 text-primary border border-primary/30'
-                          : 'text-slate-500 hover:text-slate-300 hover:bg-white/5 border border-transparent'
-                      }`}
+                      onClick={() => {
+                        const allExpanded = Object.values(expandedGroups).every(Boolean)
+                        const newState = {}
+                        Object.keys(expandedGroups).forEach(k => { newState[k] = !allExpanded })
+                        setExpandedGroups(newState)
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white border border-white/10 rounded-full text-[9px] font-black uppercase tracking-widest transition-all"
                     >
-                      <span className="material-symbols-rounded text-xs">{tab.icon}</span>
-                      {tab.label}
+                      <span className="material-symbols-rounded text-sm">{Object.values(expandedGroups).every(Boolean) ? 'unfold_less' : 'unfold_more'}</span>
+                      {Object.values(expandedGroups).every(Boolean) ? 'Recolher' : 'Expandir'}
                     </button>
-                  ))}
+                  </div>
                 </div>
               </div>
 
@@ -844,197 +978,511 @@ export default function Dashboard() {
                   <p className="text-sm text-slate-500 mt-3">Nenhum resultado nesta categoria.</p>
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-white/1">
-                        <th className="text-left px-6 py-4 font-black text-slate-500 uppercase text-[10px] tracking-widest w-[32%]">Variável / Teste</th>
-                        <th className="text-left px-6 py-4 font-black text-slate-500 uppercase text-[10px] tracking-widest w-[22%]">Estatísticas</th>
-                        <th className="text-right px-6 py-4 font-black text-slate-500 uppercase text-[10px] tracking-widest w-[10%]"><StatTooltip term="p-valor">Valor P</StatTooltip></th>
-                        <th className="text-center px-6 py-4 font-black text-slate-500 uppercase text-[10px] tracking-widest w-[7%]">Sig.</th>
-                        <th className="text-left px-6 py-4 font-black text-slate-500 uppercase text-[10px] tracking-widest w-[14%]"><StatTooltip term="effect_size">Tam. Efeito</StatTooltip></th>
-                        <th className="text-center px-6 py-4 font-black text-slate-500 uppercase text-[10px] tracking-widest w-[7%]">Gráfico</th>
-                        <th className="text-center px-6 py-4 font-black text-slate-500 uppercase text-[10px] tracking-widest w-[9%]">APA / Info</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/5">
-                      {sortedResults.map((r, i) => {
-                        const isDescriptive = (r.testLabel || '').toLowerCase().includes('descritiva') || (r.testLabel || '').toLowerCase().includes('desfecho')
-                        return (
-                          <tr key={i} className={`hover:bg-primary/5 transition-colors group ${isDescriptive ? 'bg-white/[0.02]' : ''}`}>
-                            <td className="px-6 py-4">
-                              <div className="flex flex-col gap-1">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  {isDescriptive && <span className="w-1.5 h-1.5 rounded-full bg-blue-400/60 shrink-0"></span>}
-                                  <span className="font-bold text-white group-hover:text-primary text-xs transition-colors">{r?.testLabel || r?.error}</span>
-                                  {r?.engine && (
-                                    <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded-full border ${
-                                      r.engine === 'pingouin'
-                                        ? 'bg-primary/10 text-primary border-primary/20'
-                                        : 'bg-slate-700/50 text-slate-500 border-slate-600/30'
-                                    }`}>
-                                      {r.engine}
-                                    </span>
+                <div className="p-4 space-y-3">
+                  {(() => {
+                    const groups = [
+                      { key: 'simpleDescriptive', label: 'Análises Descritivas', icon: 'description', color: 'blue', items: [] },
+                      { key: 'descriptive', label: 'Perfil do Desfecho', icon: 'pie_chart', color: 'emerald', items: [] },
+                      { key: 'paired', label: 'Testes Pareados', icon: 'compare_arrows', color: 'cyan', items: [] },
+                      { key: 'correlations', label: 'Correlações', icon: 'scatter_plot', color: 'violet', items: [] },
+                      { key: 'groupComparisons', label: 'Comparações entre Grupos', icon: 'group_work', color: 'emerald', items: [] },
+                      { key: 'regressions', label: 'Regressões', icon: 'model_training', color: 'amber', items: [] },
+                      { key: 'other', label: 'Outros Testes', icon: 'analytics', color: 'slate', items: [] },
+                    ]
+
+                    results.forEach(r => {
+                      const label = (r.testLabel || '').toLowerCase()
+                      if (label.includes('descritiva') || label.includes('desfecho')) {
+                        if (label.includes('perfil') || label.includes('outcome') || label.includes('desfecho')) {
+                          groups[1].items.push(r)
+                        } else {
+                          groups[0].items.push(r)
+                        }
+                      } else if (label.includes('correlação') || label.includes('pearson') || label.includes('spearman')) {
+                        groups[3].items.push(r)
+                      } else if (label.includes('pareado') || label.includes('wilcoxon')) {
+                        groups[2].items.push(r)
+                      } else if (label.includes('t independente') || label.includes('mann-whitney') || label.includes('anova') || label.includes('kruskal') || label.includes('qui-quadrado') || label.includes('fisher') || label.includes('exato')) {
+                        groups[4].items.push(r)
+                      } else if (label.includes('regressão') || label.includes('regressao') || label.includes('logística') || label.includes('logistica')) {
+                        groups[5].items.push(r)
+                      } else {
+                        groups[6].items.push(r)
+                      }
+                    })
+
+                    const colorMap = {
+                      blue: { bg: 'bg-blue-500/10', border: 'border-blue-500/20', text: 'text-blue-400', glow: 'rgba(59,130,246,0.15)' },
+                      emerald: { bg: 'bg-emerald-500/10', border: 'border-emerald-500/20', text: 'text-emerald-400', glow: 'rgba(16,185,129,0.15)' },
+                      cyan: { bg: 'bg-cyan-500/10', border: 'border-cyan-500/20', text: 'text-cyan-400', glow: 'rgba(6,182,212,0.15)' },
+                      violet: { bg: 'bg-violet-500/10', border: 'border-violet-500/20', text: 'text-violet-400', glow: 'rgba(139,92,246,0.15)' },
+                      amber: { bg: 'bg-amber-500/10', border: 'border-amber-500/20', text: 'text-amber-400', glow: 'rgba(245,158,11,0.15)' },
+                      slate: { bg: 'bg-slate-500/10', border: 'border-slate-500/20', text: 'text-slate-400', glow: 'rgba(100,116,139,0.15)' },
+                    }
+
+                    const toggleGroup = (key) => {
+                      setExpandedGroups(prev => ({ ...prev, [key]: !prev[key] }))
+                    }
+
+                    return groups.filter(g => g.items.length > 0).map((group) => {
+                      const isExpanded = expandedGroups[group.key]
+                      const c = colorMap[group.color]
+                      const significantCount = group.items.filter(r => r.p_value != null && r.p_value < 0.05).length
+                      const relevance = group.items.length > 0 ? Math.round((significantCount / group.items.length) * 100) : 0
+
+                      return (
+                        <div
+                          key={group.key}
+                          className={`rounded-3xl border transition-all duration-500 overflow-hidden ${
+                            isExpanded
+                              ? `${c.bg} ${c.border} shadow-[0_20px_50px_-20px_var(--glow)]`
+                              : 'bg-white/[0.01] border-white/5 hover:border-white/10'
+                          }`}
+                          style={{ '--glow': c.glow }}
+                        >
+                          <button
+                            onClick={() => toggleGroup(group.key)}
+                            className="w-full text-left px-8 py-6 flex items-center justify-between group"
+                          >
+                            <div className="flex items-center gap-6">
+                              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center border transition-all duration-500 ${
+                                isExpanded
+                                  ? `${c.bg} ${c.text} ${c.border}`
+                                  : 'bg-white/5 text-slate-400 border-white/10 group-hover:border-white/20'
+                              }`}>
+                                <span className="material-symbols-rounded text-2xl">{group.icon}</span>
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-3 mb-1">
+                                  <h3 className={`text-lg font-black transition-colors ${isExpanded ? c.text : 'text-white'}`}>{group.label}</h3>
+                                  <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-white/5 border border-white/5">
+                                    <div className={`w-1 h-1 rounded-full ${c.text} opacity-60`}></div>
+                                    <span className="text-[9px] font-black tracking-widest text-slate-500 uppercase">{group.items.length} TESTES</span>
+                                  </div>
+                                  {significantCount > 0 && (
+                                    <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-primary/5 border border-primary/10">
+                                      <div className="w-1 h-1 rounded-full bg-primary"></div>
+                                      <span className="text-[9px] font-black tracking-widest text-primary uppercase">{significantCount} SIG.</span>
+                                    </div>
                                   )}
                                 </div>
-                                {r?.group_stats && r.group_stats.length > 0 && (
-                                  <div className="flex flex-wrap gap-2 mt-1">
-                                    {r.group_stats.map(g => (
-                                      <span key={g.group} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white/5 rounded-lg border border-white/5">
-                                        <span className="w-1.5 h-1.5 rounded-full bg-primary/60"></span>
-                                        <span className="text-[10px] font-bold text-slate-400">{g.group}</span>
-                                        <span className="text-[9px] font-black text-primary bg-primary/10 px-1.5 py-0.5 rounded">N:{g.n}</span>
-                                        {g.pct_of_total && <span className="text-[9px] font-bold text-slate-500">({g.pct_of_total})</span>}
-                                      </span>
-                                    ))}
+                                <div className="flex items-center gap-4">
+                                  <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Significância</div>
+                                  <div className="w-24 h-1 bg-white/5 rounded-full overflow-hidden">
+                                    <motion.div
+                                      initial={{ width: 0 }}
+                                      animate={{ width: `${relevance}%` }}
+                                      className={`h-full ${isExpanded ? 'bg-primary' : 'bg-slate-600'} shadow-[0_0_10px_rgba(0,255,163,0.5)]`}
+                                    />
                                   </div>
-                                )}
-                                {r?.interpretation && (
-                                  <div className="mt-2 p-2.5 bg-primary/5 border border-primary/10 rounded-lg">
-                                    <p className="text-[10px] leading-relaxed text-slate-300">
-                                      <span className="material-symbols-rounded text-[10px] text-primary align-middle mr-1">auto_awesome</span>
-                                      {r.interpretation}
-                                    </p>
-                                  </div>
-                                )}
-                                {r?.assumptions && r.assumptions.length > 0 && (
-                                  <div className="mt-1 space-y-1">
-                                    {r.assumptions.map((a, ai) => (
-                                      <div key={ai} className={`flex items-start gap-1.5 text-[9px] px-2 py-1 rounded ${a.severity === 'warning' ? 'bg-amber-500/10 border border-amber-500/20 text-amber-400' : 'bg-blue-500/10 border border-blue-500/20 text-blue-400'}`}>
-                                        <span className="material-symbols-rounded text-[10px] mt-px">{a.severity === 'warning' ? 'warning' : 'info'}</span>
-                                        <span>{a.message}</span>
-                                        {a.recommendation && <span className="font-bold ml-1">→ Sugestão: {a.recommendation}</span>}
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
+                                </div>
                               </div>
-                            </td>
-                            <td className="px-6 py-4">
-                              <div className="flex flex-col gap-1.5 items-end">
-                                {r?.group_stats && r.group_stats.length > 0 ? (
-                                  r.group_stats.map(g => (
-                                    <div key={g.group} className="flex flex-col items-end gap-0.5">
-                                      <div className="flex items-center gap-2">
-                                        <span className="text-[10px] font-bold text-slate-500 text-right">{g.group}:</span>
-                                        <span className="text-xs font-mono font-bold text-white">{g.median_iqr}</span>
-                                      </div>
-                                      {g.mean != null && (
-                                        <span className="text-[9px] font-mono text-slate-500">M={g.mean} ±{g.std}</span>
-                                      )}
-                                      {g.ci_95 && (
-                                        <span className="text-[9px] font-mono text-slate-600">
-                                          <StatTooltip term="ic95">IC95%</StatTooltip>:[{g.ci_95.ci_lower}, {g.ci_95.ci_upper}]
-                                        </span>
-                                      )}
-                                    </div>
-                                  ))
-                                ) : (
-                                  <span className="text-xs font-mono font-bold text-slate-400">{r?.median_iqr || '—'}</span>
-                                )}
-                                {r?.ci && (
-                                  <div className="mt-1 text-[9px] font-mono text-slate-500">
-                                    <StatTooltip term="ic95">IC95%</StatTooltip>: [{r.ci.ci_lower}, {r.ci.ci_upper}]
-                                  </div>
-                                )}
-                              </div>
-                            </td>
-                            <td className="px-6 py-4 text-right font-mono">
-                              <StatTooltip term="p-valor">
-                                <span className={`font-black ${(r?.p_value != null && r.p_value < 0.05) ? 'text-primary' : 'text-slate-600'}`}>
-                                  {r?.p_value != null ? (r.p_value < 0.001 ? '<0.001' : r.p_value.toFixed(4)) : '—'}
-                                </span>
-                              </StatTooltip>
-                            </td>
-                            <td className="px-6 py-4 text-center"><span className={`text-[12px] font-black tracking-widest ${(r?.p_value != null && r.p_value < 0.05) ? 'text-primary' : 'text-slate-700'}`}>{significance(r?.p_value)}</span></td>
-                            <td className="px-6 py-4">
-                              <div className="flex flex-col items-center gap-1">
-                                {r?.effect_size ? (
-                                  <>
-                                    {r.effect_size.cohens_d != null && (
-                                      <StatTooltip term="cohens_d">
-                                        <span className="text-xs font-mono font-bold text-white">d={r.effect_size.cohens_d}</span>
-                                      </StatTooltip>
-                                    )}
-                                    {r.effect_size.eta_squared != null && (
-                                      <StatTooltip term="eta_squared">
-                                        <span className="text-xs font-mono font-bold text-white">η²={r.effect_size.eta_squared}</span>
-                                      </StatTooltip>
-                                    )}
-                                    {r.effect_size.r_squared != null && (
-                                      <StatTooltip term="r_squared">
-                                        <span className="text-xs font-mono font-bold text-white">R²={r.effect_size.r_squared}</span>
-                                      </StatTooltip>
-                                    )}
-                                    {r.effect_size.cramers_v != null && (
-                                      <StatTooltip term="cramers_v">
-                                        <span className="text-xs font-mono font-bold text-white">V={r.effect_size.cramers_v}</span>
-                                      </StatTooltip>
-                                    )}
-                                    <span className={`text-[9px] font-bold ${r.effect_size.interpretation === 'Grande' || r.effect_size.interpretation === 'Forte' || r.effect_size.interpretation === 'Muito forte' ? 'text-primary' : r.effect_size.interpretation === 'Médio' || r.effect_size.interpretation === 'Moderado' ? 'text-amber-400' : 'text-slate-500'}`}>
-                                      ({r.effect_size.interpretation})
-                                    </span>
-                                    {r.effect_size.achieved_power != null && (
-                                      <StatTooltip term="power">
-                                        <span className={`text-[9px] font-bold ${r.effect_size.achieved_power >= 0.8 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                          Poder: {(r.effect_size.achieved_power * 100).toFixed(0)}%
-                                        </span>
-                                      </StatTooltip>
-                                    )}
-                                  </>
-                                ) : (
-                                  <span className="text-xs text-slate-600">—</span>
-                                )}
-                              </div>
-                            </td>
-                            <td className="px-6 py-4 text-center">
-                              {r?.chart_data && (
-                                <motion.button
-                                  whileHover={{ scale: 1.15 }}
-                                  whileTap={{ scale: 0.9 }}
-                                  onClick={() => setChartModal({ open: true, data: r.chart_data, varName: r.testLabel.split(' (')[0] })}
-                                  className="w-9 h-9 rounded-xl bg-primary/10 hover:bg-primary/20 flex items-center justify-center text-primary transition-all mx-auto"
-                                  title="Gerar gráfico"
-                                >
-                                  <span className="material-symbols-rounded text-sm">bar_chart</span>
-                                </motion.button>
-                              )}
-                            </td>
-                            <td className="px-6 py-4 text-center">
-                              <div className="flex items-center justify-center gap-1.5">
-                                <motion.button
-                                  whileHover={{ scale: 1.15 }}
-                                  whileTap={{ scale: 0.9 }}
-                                  onClick={() => copyApa(r)}
-                                  className={`w-8 h-8 rounded-xl flex items-center justify-center transition-all ${
-                                    apaCopied === r.testLabel
-                                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                                      : 'bg-white/5 hover:bg-violet-500/10 text-slate-500 hover:text-violet-400'
-                                  }`}
-                                  title="Copiar citação APA"
-                                >
-                                  <span className="material-symbols-rounded text-xs">
-                                    {apaCopied === r.testLabel ? 'check' : 'format_quote'}
-                                  </span>
-                                </motion.button>
-                                <motion.button
-                                  whileHover={{ scale: 1.15 }}
-                                  whileTap={{ scale: 0.9 }}
-                                  onClick={() => setDetailModal(r)}
-                                  className="w-8 h-8 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-white transition-all"
-                                  title="Ver detalhes completos"
-                                >
-                                  <span className="material-symbols-rounded text-xs">info</span>
-                                </motion.button>
-                              </div>
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
+                            </div>
+                            <div className={`w-10 h-10 rounded-full flex items-center justify-center border transition-all ${
+                              isExpanded
+                                ? `${c.bg} ${c.border} ${c.text}`
+                                : 'bg-white/5 border-white/10 text-slate-600'
+                            }`}>
+                              <motion.span
+                                className="material-symbols-rounded"
+                                animate={{ rotate: isExpanded ? 180 : 0 }}
+                                transition={{ duration: 0.3 }}
+                              >
+                                expand_more
+                              </motion.span>
+                            </div>
+                          </button>
+
+                          <AnimatePresence>
+                            {isExpanded && (
+                              <motion.div
+                                initial={{ height: 0, opacity: 0 }}
+                                animate={{ height: 'auto', opacity: 1 }}
+                                exit={{ height: 0, opacity: 0 }}
+                                transition={{ duration: 0.3, ease: 'easeOut' }}
+                                className="border-t border-white/5"
+                              >
+                                <div className="overflow-x-auto">
+                                  <table className="w-full text-sm">
+                                    <thead>
+                                      <tr className="bg-black/20">
+                                        <th className="text-left px-6 py-3 font-black text-slate-500 uppercase text-[10px] tracking-widest w-[32%]">Variável / Teste</th>
+                                        <th className="text-left px-6 py-3 font-black text-slate-500 uppercase text-[10px] tracking-widest w-[22%]">Estatísticas</th>
+                                        <th className="text-right px-6 py-3 font-black text-slate-500 uppercase text-[10px] tracking-widest w-[10%]"><StatTooltip term="p-valor">Valor P</StatTooltip></th>
+                                        <th className="text-center px-6 py-3 font-black text-slate-500 uppercase text-[10px] tracking-widest w-[7%]">Sig.</th>
+                                        <th className="text-left px-6 py-3 font-black text-slate-500 uppercase text-[10px] tracking-widest w-[14%]"><StatTooltip term="effect_size">Tam. Efeito</StatTooltip></th>
+                                        <th className="text-center px-6 py-3 font-black text-slate-500 uppercase text-[10px] tracking-widest w-[7%]">Gráfico</th>
+                                        <th className="text-center px-6 py-3 font-black text-slate-500 uppercase text-[10px] tracking-widest w-[9%]">APA / Info</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-white/5">
+                                      {group.items.map((r, i) => {
+                                        const isDescriptive = (r.testLabel || '').toLowerCase().includes('descritiva') || (r.testLabel || '').toLowerCase().includes('desfecho')
+                                        const badge = getTestTypeBadge(r?.testLabel)
+                                        const naForPval = isPvalNA(r?.testLabel)
+                                        const naForEffectSize = isDescriptive && !r?.effect_size
+                                        return (
+                                          <tr key={i} className={`hover:bg-primary/5 transition-colors group ${isDescriptive ? 'bg-white/[0.02]' : ''}`}>
+                                            <td className="px-6 py-4">
+                                              <div className="flex flex-col gap-1">
+                                                <div className="flex items-center gap-2 flex-wrap">
+                                                  <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full border ${badge.bg} ${badge.text} ${badge.border}`}>
+                                                    {badge.label}
+                                                  </span>
+                                                  <span className="font-bold text-white group-hover:text-primary text-xs transition-colors">{r?.testLabel || r?.error}</span>
+                                                  {r?.engine && (
+                                                    <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded-full border ${
+                                                      r.engine === 'pingouin'
+                                                        ? 'bg-primary/10 text-primary border-primary/20'
+                                                        : 'bg-slate-700/50 text-slate-500 border-slate-600/30'
+                                                    }`}>
+                                                      {r.engine}
+                                                    </span>
+                                                  )}
+                                                </div>
+                                                {r?.group_stats && r.group_stats.length > 0 && (
+                                                  <div className="flex flex-wrap gap-2 mt-1">
+                                                    {r.group_stats.map(g => (
+                                                      <span key={g.group} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white/5 rounded-lg border border-white/5">
+                                                        <span className="w-1.5 h-1.5 rounded-full bg-primary/60"></span>
+                                                        <span className="text-[10px] font-bold text-slate-400">{g.group}</span>
+                                                        <span className="text-[9px] font-black text-primary bg-primary/10 px-1.5 py-0.5 rounded">N:{g.n}</span>
+                                                        {g.pct_of_total && <span className="text-[9px] font-bold text-slate-500">({g.pct_of_total})</span>}
+                                                      </span>
+                                                    ))}
+                                                  </div>
+                                                )}
+                                                {r?.interpretation && (
+                                                  <div className="mt-2 p-2.5 bg-primary/5 border border-primary/10 rounded-lg">
+                                                    <p className="text-[10px] leading-relaxed text-slate-300">
+                                                      <span className="material-symbols-rounded text-[10px] text-primary align-middle mr-1">auto_awesome</span>
+                                                      {r.interpretation}
+                                                    </p>
+                                                  </div>
+                                                )}
+                                                {r?.assumptions && r.assumptions.length > 0 && (
+                                                  <div className="mt-1 space-y-1">
+                                                    {r.assumptions.map((a, ai) => (
+                                                      <div key={ai} className={`flex items-start gap-1.5 text-[9px] px-2 py-1 rounded ${a.severity === 'warning' ? 'bg-amber-500/10 border border-amber-500/20 text-amber-400' : 'bg-blue-500/10 border border-blue-500/20 text-blue-400'}`}>
+                                                        <span className="material-symbols-rounded text-[10px] mt-px">{a.severity === 'warning' ? 'warning' : 'info'}</span>
+                                                        <span>{a.message}</span>
+                                                        {a.recommendation && <span className="font-bold ml-1">→ Sugestão: {a.recommendation}</span>}
+                                                      </div>
+                                                    ))}
+                                                  </div>
+                                                )}
+                                              </div>
+                                            </td>
+                                            <td className="px-6 py-4">
+                                              <div className="flex flex-col gap-1.5 items-end">
+                                                {r?.group_stats && r.group_stats.length > 0 ? (
+                                                  r.group_stats.map(g => (
+                                                    <div key={g.group} className="flex flex-col items-end gap-0.5">
+                                                      <div className="flex items-center gap-2">
+                                                        <span className="text-[10px] font-bold text-slate-500 text-right">{g.group}:</span>
+                                                        <span className="text-xs font-mono font-bold text-white">{g.median_iqr}</span>
+                                                      </div>
+                                                      {g.mean != null && (
+                                                        <span className="text-[9px] font-mono text-slate-500">M={g.mean} ±{g.std}</span>
+                                                      )}
+                                                      {g.ci_95 && (
+                                                        <span className="text-[9px] font-mono text-slate-600">
+                                                          <StatTooltip term="ic95">IC95%</StatTooltip>:[{g.ci_95.ci_lower}, {g.ci_95.ci_upper}]
+                                                        </span>
+                                                      )}
+                                                    </div>
+                                                  ))
+                                                ) : (
+                                                  <span className="text-xs font-mono font-bold text-slate-400">{r?.median_iqr || '—'}</span>
+                                                )}
+                                                {r?.ci && (
+                                                  <div className="mt-1 text-[9px] font-mono text-slate-500">
+                                                    <StatTooltip term="ic95">IC95%</StatTooltip>: [{r.ci.ci_lower}, {r.ci.ci_upper}]
+                                                  </div>
+                                                )}
+                                              </div>
+                                            </td>
+                                            <td className="px-6 py-4 text-right font-mono">
+                                              {naForPval ? (
+                                                <span className="inline-flex items-center justify-center gap-1">
+                                                  <span className="text-rose-500 font-black text-sm">✕</span>
+                                                  <span className="text-[9px] text-slate-600 font-bold">N/A</span>
+                                                </span>
+                                              ) : (
+                                                <StatTooltip term="p-valor">
+                                                  <span className={`font-black ${(r?.p_value != null && r.p_value < 0.05) ? 'text-primary' : 'text-slate-600'}`}>
+                                                    {r?.p_value != null ? (r.p_value < 0.001 ? '<0.001' : r.p_value.toFixed(4)) : '—'}
+                                                  </span>
+                                                </StatTooltip>
+                                              )}
+                                            </td>
+                                            <td className="px-6 py-4 text-center">
+                                              {naForPval ? (
+                                                <span className="text-rose-500 font-black text-sm">✕</span>
+                                              ) : (
+                                                <span className={`text-[12px] font-black tracking-widest ${(r?.p_value != null && r.p_value < 0.05) ? 'text-primary' : 'text-slate-700'}`}>{significance(r?.p_value)}</span>
+                                              )}
+                                            </td>
+                                            <td className="px-6 py-4">
+                                              <div className="flex flex-col items-center gap-1">
+                                                {r?.effect_size ? (
+                                                  <>
+                                                    {r.effect_size.cohens_d != null && (
+                                                      <StatTooltip term="cohens_d">
+                                                        <span className="text-xs font-mono font-bold text-white">d={r.effect_size.cohens_d}</span>
+                                                      </StatTooltip>
+                                                    )}
+                                                    {r.effect_size.eta_squared != null && (
+                                                      <StatTooltip term="eta_squared">
+                                                        <span className="text-xs font-mono font-bold text-white">η²={r.effect_size.eta_squared}</span>
+                                                      </StatTooltip>
+                                                    )}
+                                                    {r.effect_size.r_squared != null && (
+                                                      <StatTooltip term="r_squared">
+                                                        <span className="text-xs font-mono font-bold text-white">R²={r.effect_size.r_squared}</span>
+                                                      </StatTooltip>
+                                                    )}
+                                                    {r.effect_size.cramers_v != null && (
+                                                      <StatTooltip term="cramers_v">
+                                                        <span className="text-xs font-mono font-bold text-white">V={r.effect_size.cramers_v}</span>
+                                                      </StatTooltip>
+                                                    )}
+                                                    <span className={`text-[9px] font-bold ${r.effect_size.interpretation === 'Grande' || r.effect_size.interpretation === 'Forte' || r.effect_size.interpretation === 'Muito forte' ? 'text-primary' : r.effect_size.interpretation === 'Médio' || r.effect_size.interpretation === 'Moderado' ? 'text-amber-400' : 'text-slate-500'}`}>
+                                                      ({r.effect_size.interpretation})
+                                                    </span>
+                                                    {r.effect_size.achieved_power != null && (
+                                                      <StatTooltip term="power">
+                                                        <span className={`text-[9px] font-bold ${r.effect_size.achieved_power >= 0.8 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                          Poder: {(r.effect_size.achieved_power * 100).toFixed(0)}%
+                                                        </span>
+                                                      </StatTooltip>
+                                                    )}
+                                                  </>
+                                                ) : naForEffectSize ? (
+                                                  <span className="inline-flex items-center gap-1">
+                                                    <span className="text-rose-500 font-black text-sm">✕</span>
+                                                    <span className="text-[9px] text-slate-600 font-bold">N/A</span>
+                                                  </span>
+                                                ) : (
+                                                  <span className="text-xs text-slate-600">—</span>
+                                                )}
+                                              </div>
+                                            </td>
+                                            <td className="px-6 py-4 text-center">
+                                              {r?.chart_data && (
+                                                <motion.button
+                                                  whileHover={{ scale: 1.15 }}
+                                                  whileTap={{ scale: 0.9 }}
+                                                  onClick={() => setChartModal({ open: true, data: r.chart_data, varName: r.testLabel.split(' (')[0] })}
+                                                  className="w-9 h-9 rounded-xl bg-primary/10 hover:bg-primary/20 flex items-center justify-center text-primary transition-all mx-auto"
+                                                >
+                                                  <span className="material-symbols-rounded text-sm">bar_chart</span>
+                                                </motion.button>
+                                              )}
+                                            </td>
+                                            <td className="px-6 py-4 text-center">
+                                              <div className="flex items-center justify-center gap-1.5">
+                                                <motion.button
+                                                  whileHover={{ scale: 1.15 }}
+                                                  whileTap={{ scale: 0.9 }}
+                                                  onClick={() => copyApa(r)}
+                                                  className={`w-8 h-8 rounded-xl flex items-center justify-center transition-all ${
+                                                    apaCopied === r.testLabel
+                                                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                                      : 'bg-white/5 hover:bg-violet-500/10 text-slate-500 hover:text-violet-400'
+                                                  }`}
+                                                >
+                                                  <span className="material-symbols-rounded text-xs">
+                                                    {apaCopied === r.testLabel ? 'check' : 'format_quote'}
+                                                  </span>
+                                                </motion.button>
+                                                <motion.button
+                                                  whileHover={{ scale: 1.15 }}
+                                                  whileTap={{ scale: 0.9 }}
+                                                  onClick={() => setDetailModal(r)}
+                                                  className="w-8 h-8 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-white transition-all"
+                                                >
+                                                  <span className="material-symbols-rounded text-xs">info</span>
+                                                </motion.button>
+                                              </div>
+                                            </td>
+                                          </tr>
+                                        )
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
+                        </div>
+                      )
+                    })
+                  })()}
                 </div>
               )}
+            </div>
+          </motion.section>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {premiumAnalysis && (
+          <motion.section 
+            ref={premiumRef}
+            initial={{ opacity: 0, y: 50 }} 
+            animate={{ opacity: 1, y: 0 }} 
+            className="mt-12 space-y-8 reveal-premium pb-20"
+          >
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-primary/10 rounded-xl">
+                <span className="material-symbols-rounded text-primary">analytics</span>
+              </div>
+              <div>
+                <h2 className="text-2xl font-black text-white italic">Insights <span className="text-primary">Premium</span></h2>
+                <p className="text-slate-500 text-[10px] font-bold uppercase tracking-widest">Análise de Redes e Detecção de Padrões Multivariados</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+              {/* Relatório Científico IA */}
+              {premiumAnalysis.scientific_report && (
+                <div className="lg:col-span-12 premium-glow-card p-1 rounded-[3rem] bg-gradient-to-r from-primary/20 via-indigo-500/20 to-primary/20 mb-4">
+                  <div className="glass-card rounded-[2.9rem] p-10 h-full relative overflow-hidden">
+                    <div className="absolute top-0 right-0 p-8 opacity-10">
+                      <span className="material-symbols-rounded text-8xl text-primary">history_edu</span>
+                    </div>
+                    
+                    <div className="flex items-center gap-3 mb-8">
+                      <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+                        <span className="material-symbols-rounded text-primary">smart_toy</span>
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-black text-white italic">Relatório Científico <span className="text-primary">IA</span></h3>
+                        <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Discussão acadêmica automática (Gemini 2.0 Flash)</p>
+                      </div>
+                    </div>
+
+                    <div className="prose prose-invert max-w-none">
+                      <div className="bg-white/[0.03] p-8 rounded-3xl border border-white/5 shadow-inner">
+                        <div className="text-slate-300 leading-relaxed space-y-4 whitespace-pre-wrap font-medium">
+                          {premiumAnalysis.scientific_report}
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="mt-8 flex justify-end">
+                      <button 
+                        onClick={() => {
+                          navigator.clipboard.writeText(premiumAnalysis.scientific_report)
+                          setApaCopied('Relatório IA')
+                          setTimeout(() => setApaCopied(null), 2000)
+                        }}
+                        className="px-6 py-3 rounded-2xl bg-white/5 border border-white/10 hover:bg-white/10 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-white transition-all flex items-center gap-2"
+                      >
+                        <span className="material-symbols-rounded text-sm">content_copy</span>
+                        {apaCopied === 'Relatório IA' ? 'Copiado!' : 'Copiar Discussão'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Super-Resumo Card */}
+              <div className="lg:col-span-12 premium-glow-card p-1 rounded-[3rem] bg-gradient-to-br from-indigo-500/10 to-primary/10 overflow-hidden">
+                <div className="glass-card rounded-[2.9rem] p-10 h-full">
+                  <div className="flex items-center gap-2 mb-6">
+                    <span className="material-symbols-rounded text-primary text-xl">auto_awesome</span>
+                    <h3 className="text-sm font-black uppercase tracking-[0.2em] text-white">Super-Resumo de Evidência</h3>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+                    <div className="space-y-6">
+                      <p className="text-sm leading-relaxed text-slate-300 italic">
+                        "{premiumAnalysis.summary?.interpretation || 'Aguardando processamento interpretativo...'}"
+                      </p>
+                      <div className="flex flex-wrap gap-4">
+                        <div className="px-4 py-2 bg-white/5 rounded-2xl border border-white/5">
+                          <p className="text-[9px] font-bold text-slate-500 uppercase">Total de Evidências</p>
+                          <p className="text-xl font-black text-white">{premiumAnalysis.results?.length || 0}</p>
+                        </div>
+                        <div className="px-4 py-2 bg-primary/10 rounded-2xl border border-primary/20">
+                          <p className="text-[9px] font-bold text-primary uppercase">Sig. Alta</p>
+                          <p className="text-xl font-black text-white">
+                            {premiumAnalysis.results?.filter(r => r.p_value < 0.01).length || 0}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="bg-black/20 rounded-3xl p-6 border border-white/5">
+                      <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4">Métricas de Confiabilidade</h4>
+                      <div className="space-y-4">
+                        {premiumAnalysis.summary?.evidence_strength && (
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-[10px] font-bold">
+                              <span className="text-slate-500">Força da Evidência</span>
+                              <span className="text-primary">{Math.round(premiumAnalysis.summary.evidence_strength * 100)}%</span>
+                            </div>
+                            <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+                              <motion.div 
+                                initial={{ width: 0 }}
+                                animate={{ width: `${premiumAnalysis.summary.evidence_strength * 100}%` }}
+                                transition={{ duration: 1, delay: 0.5 }}
+                                className="h-full bg-primary"
+                              />
+                            </div>
+                          </div>
+                        )}
+                        <p className="text-[10px] text-slate-500 leading-relaxed">
+                          A força da evidência é calculada com base na consistência dos p-valores e na magnitude dos tamanhos de efeito em todo o dataset.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Individual Premium Insights */}
+              {premiumAnalysis.results?.map((r, idx) => (
+                <div key={idx} className="lg:col-span-6 group">
+                  <motion.div 
+                    whileHover={{ y: -8 }}
+                    className="glass-card rounded-[2.5rem] p-8 h-full border border-white/5 hover:border-primary/30 transition-all flex flex-col"
+                  >
+                    <div className="flex justify-between items-start mb-6">
+                      <div className="w-12 h-12 bg-primary/10 rounded-2xl flex items-center justify-center text-primary">
+                        <span className="material-symbols-rounded text-2xl">insights</span>
+                      </div>
+                      <div className="text-right">
+                        <p className={`text-xl font-black stat-p-value ${r.p_value < 0.05 ? 'stat-p-significant' : 'text-slate-600'}`}>
+                          p = {r.p_value < 0.001 ? '<.001' : r.p_value.toFixed(4)}
+                        </p>
+                        <p className="text-[9px] font-black uppercase tracking-widest text-slate-500 mt-1">{r.label}</p>
+                      </div>
+                    </div>
+                    
+                    <h4 className="text-white font-black text-lg mb-4">{r.insight_label || 'Análise de Componente'}</h4>
+                    <p className="text-xs text-slate-400 leading-relaxed mb-6 flex-1">
+                      {r.interpretation}
+                    </p>
+
+                    <div className="pt-6 border-t border-white/5 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="px-3 py-1 bg-white/5 rounded-full border border-white/5">
+                          <span className="text-[9px] font-bold text-slate-500">Stat: </span>
+                          <span className="text-[9px] font-black text-white font-mono">{r.statistic.toFixed(2)}</span>
+                        </div>
+                        <div className="px-3 py-1 bg-primary/5 rounded-full border border-primary/20">
+                          <span className="text-[9px] font-bold text-primary">Ef: </span>
+                          <span className="text-[9px] font-black text-white font-mono">{r.effect_size.toFixed(2)}</span>
+                        </div>
+                      </div>
+                      <div className="w-8 h-8 rounded-full border border-white/10 flex items-center justify-center text-slate-500 group-hover:text-primary transition-colors">
+                        <span className="material-symbols-rounded text-sm">trending_up</span>
+                      </div>
+                    </div>
+                  </motion.div>
+                </div>
+              ))}
             </div>
           </motion.section>
         )}

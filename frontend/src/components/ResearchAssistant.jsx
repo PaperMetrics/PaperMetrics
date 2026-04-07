@@ -1,6 +1,8 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { useSciStat } from '../SciStatContext'
 import { useAuth } from '../AuthContext'
 
@@ -16,6 +18,133 @@ const PAGE_NAMES = {
   '/settings': 'Ajustes',
 }
 
+const TEST_COLORS = {
+  DESCRITIVA: { bg: 'bg-blue-500/15', text: 'text-blue-400', border: 'border-blue-500/30', badge: 'bg-blue-500/20 text-blue-300' },
+  CORRELAÇÃO: { bg: 'bg-violet-500/15', text: 'text-violet-400', border: 'border-violet-500/30', badge: 'bg-violet-500/20 text-violet-300' },
+  REGRESSÃO: { bg: 'bg-amber-500/15', text: 'text-amber-400', border: 'border-amber-500/30', badge: 'bg-amber-500/20 text-amber-300' },
+  COMPARAÇÃO: { bg: 'bg-emerald-500/15', text: 'text-emerald-400', border: 'border-emerald-500/30', badge: 'bg-emerald-500/20 text-emerald-300' },
+  PAREADO: { bg: 'bg-cyan-500/15', text: 'text-cyan-400', border: 'border-cyan-500/30', badge: 'bg-cyan-500/20 text-cyan-300' },
+  NORMALIDADE: { bg: 'bg-rose-500/15', text: 'text-rose-400', border: 'border-rose-500/30', badge: 'bg-rose-500/20 text-rose-300' },
+}
+
+function parseColoredTags(text) {
+  if (!text) return text
+  const tagRegex = /\[\[(DESCRITIVA|CORRELAÇÃO|REGRESSÃO|COMPARAÇÃO|PAREADO|NORMALIDADE)\]\](.*?)\[\[\/\1\]\]/g
+  const parts = []
+  let lastIndex = 0
+  let match
+
+  while ((match = tagRegex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push({ type: 'text', content: text.slice(lastIndex, match.index) })
+    }
+    const colorKey = match[1]
+    const content = match[2]
+    const colors = TEST_COLORS[colorKey] || TEST_COLORS.DESCRITIVA
+    parts.push({ type: 'colored', content, colors, key: colorKey })
+    lastIndex = match.index + match[0].length
+  }
+
+  if (lastIndex < text.length) {
+    parts.push({ type: 'text', content: text.slice(lastIndex) })
+  }
+
+  return parts.length > 0 ? parts : [{ type: 'text', content: text }]
+}
+
+function ColoredText({ parts }) {
+  if (!Array.isArray(parts)) {
+    return <span>{parts}</span>
+  }
+  return (
+    <>
+      {parts.map((part, i) => {
+        if (part.type === 'colored') {
+          return (
+            <span
+              key={i}
+              className={`inline-block px-1.5 py-0.5 rounded-md text-[11px] font-bold ${part.colors.badge} mx-0.5`}
+            >
+              {part.content}
+            </span>
+          )
+        }
+        return <span key={i}>{part.content}</span>
+      })}
+    </>
+  )
+}
+
+function cleanMarkdown(text) {
+  if (!text) return ''
+  let cleaned = text
+  cleaned = cleaned.replace(/`\.?`/g, '')
+  cleaned = cleaned.replace(/```\s*\n?\s*```/g, '')
+  cleaned = cleaned.replace(/\*\*\s*\*\*/g, '')
+  cleaned = cleaned.replace(/\*\s{2,}\*/g, '')
+  cleaned = cleaned.replace(/`([^`]{0,2})`/g, '$1')
+  return cleaned
+}
+
+const markdownComponents = {
+  p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>,
+  ul: ({ children }) => <ul className="list-disc pl-4 mb-2 space-y-1">{children}</ul>,
+  ol: ({ children }) => <ol className="list-decimal pl-4 mb-2 space-y-1">{children}</ol>,
+  li: ({ children }) => <li className="text-[11px] leading-relaxed">{children}</li>,
+  strong: ({ children }) => <strong className="font-bold text-slate-100">{children}</strong>,
+  em: ({ children }) => <em className="text-slate-200 not-italic font-medium">{children}</em>,
+  code: ({ children, className }) => {
+    const isInline = !className
+    if (isInline) {
+      return <span className="bg-white/10 text-slate-100 px-1.5 py-0.5 rounded text-[11px] font-semibold">{children}</span>
+    }
+    return <code className="block bg-white/5 border border-white/10 rounded-lg p-3 text-[10px] font-mono text-slate-300 overflow-x-auto my-2">{children}</code>
+  },
+  h1: ({ children }) => <h1 className="text-sm font-bold text-primary mb-2 mt-3">{children}</h1>,
+  h2: ({ children }) => <h2 className="text-[12px] font-bold text-primary mb-1.5 mt-2">{children}</h2>,
+  h3: ({ children }) => <h3 className="text-[11px] font-semibold text-emerald-400 mb-1 mt-2">{children}</h3>,
+  blockquote: ({ children }) => <blockquote className="border-l-2 border-primary/30 pl-3 text-[11px] text-slate-400 italic my-2">{children}</blockquote>,
+  hr: () => <hr className="border-white/10 my-3" />,
+  a: ({ children, href }) => <a href={href} className="text-primary underline hover:text-emerald-300 transition-colors">{children}</a>,
+}
+
+function MarkdownContent({ content }) {
+  const cleaned = cleanMarkdown(content)
+  const parsedParts = useMemo(() => parseColoredTags(cleaned), [cleaned])
+
+  const hasColoredTags = Array.isArray(parsedParts) && parsedParts.some(p => p.type === 'colored')
+
+  if (!hasColoredTags) {
+    return (
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+        {cleaned}
+      </ReactMarkdown>
+    )
+  }
+
+  return (
+    <div className="space-y-2">
+      {parsedParts.map((part, i) => {
+        if (part.type === 'colored') {
+          return (
+            <span
+              key={i}
+              className={`inline-block px-2 py-1 rounded-lg text-[11px] font-bold ${part.colors.badge}`}
+            >
+              {part.content}
+            </span>
+          )
+        }
+        return (
+          <ReactMarkdown key={i} remarkPlugins={[remarkGfm]} components={markdownComponents}>
+            {part.content}
+          </ReactMarkdown>
+        )
+      })}
+    </div>
+  )
+}
+
 export default function ResearchAssistant({ isOpen, setIsOpen }) {
   const { trials, history, notifications } = useSciStat()
   const { session } = useAuth()
@@ -23,7 +152,7 @@ export default function ResearchAssistant({ isOpen, setIsOpen }) {
   const [messages, setMessages] = useState([
     {
       role: 'assistant',
-      content: 'Olá! Sou o SciStat AI, seu assistente de bioestatística. Posso ajudar com testes estatísticos, interpretação de resultados, sugestões de análise e muito mais. Como posso ajudar?',
+      content: 'Olá! 👋 Sou o **SciStat AI**, seu assistente pessoal de bioestatística.\n\nPosso te ajudar a:\n- Escolher o **teste estatístico** ideal para seus dados\n- **Interpretar resultados** de análises\n- Sugerir o melhor caminho na plataforma\n- Explicar conceitos de forma simples\n\nComo posso ajudar hoje?',
       needsUpload: false
     }
   ])
@@ -199,7 +328,11 @@ export default function ResearchAssistant({ isOpen, setIsOpen }) {
                         <span className="text-[10px] font-bold truncate">{msg.fileName}</span>
                       </div>
                     )}
-                    <div className="whitespace-pre-wrap">{msg.content}</div>
+                    {msg.role === 'user' ? (
+                      <div className="whitespace-pre-wrap">{msg.content}</div>
+                    ) : (
+                      <MarkdownContent content={msg.content} />
+                    )}
                     {msg.needsUpload && (
                       <button
                         onClick={() => fileInputRef.current?.click()}

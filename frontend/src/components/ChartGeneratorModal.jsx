@@ -124,7 +124,7 @@ export default function ChartGeneratorModal({ isOpen, onClose, chartData, varNam
       const rowLabels = tbl.map(r => r.row_label)
       const datasets = cats.map((cat, ci) => ({
         label: cat,
-        data: tbl.map(r => r[cat].count),
+        data: tbl.map(r => r[cat]?.count ?? 0),
         backgroundColor: [
           'rgba(0, 255, 163, 0.7)',
           'rgba(59, 130, 246, 0.7)',

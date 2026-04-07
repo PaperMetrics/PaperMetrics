@@ -1,0 +1,151 @@
+Nome,Idade,Sexo,Pratica_Exercicio,Período_Faculdade,Fase_Curso,Método_Estudo_Favorito,Consumo_Cafe_Xicaras_Dia,Qualidade_Sono,Concentracao,Desempenho_Notas_Medias
+Aluno_1,19,Feminino,Não,1,Básico,Resumos,2,8,7,79.2
+Aluno_2,17,Masculino,Não,1,Básico,Flashcards,2,7,8,80.6
+Aluno_3,21,Masculino,Não,3,Básico,Mapas Mentais,0,9,6,70.5
+Aluno_4,23,Masculino,Não,2,Básico,Resumos,2,8,9,74.6
+Aluno_5,23,Feminino,Não,5,Clínico,Resumos,2,9,10,86.3
+Aluno_6,24,Feminino,Não,12,Internato,Questões,7,4,8,78.0
+Aluno_7,25,Feminino,Não,10,Internato,Mapas Mentais,6,5,10,81.1
+Aluno_8,24,Masculino,Não,6,Clínico,Questões,2,7,8,81.4
+Aluno_9,22,Masculino,Sim,7,Clínico,Flashcards,4,6,10,88.2
+Aluno_10,22,Masculino,Não,4,Básico,Resumos,2,8,8,72.3
+Aluno_11,24,Feminino,Não,7,Clínico,Resumos,4,7,10,85.8
+Aluno_12,23,Masculino,Sim,11,Internato,Questões,7,4,7,75.4
+Aluno_13,25,Masculino,Não,8,Clínico,Mapas Mentais,3,8,10,88.3
+Aluno_14,27,Feminino,Sim,11,Internato,Flashcards,7,6,10,83.2
+Aluno_15,23,Feminino,Sim,1,Básico,Flashcards,1,9,7,89.0
+Aluno_16,25,Feminino,Não,6,Clínico,Questões,3,9,10,90.3
+Aluno_17,21,Feminino,Sim,8,Clínico,Questões,5,5,10,83.9
+Aluno_18,21,Feminino,Não,5,Clínico,Flashcards,2,7,9,79.8
+Aluno_19,23,Feminino,Não,4,Básico,Resumos,2,6,8,72.1
+Aluno_20,22,Feminino,Não,2,Básico,Resumos,1,10,9,83.9
+Aluno_21,24,Masculino,Sim,6,Clínico,Flashcards,7,5,9,81.8
+Aluno_22,31,Feminino,Sim,6,Clínico,Flashcards,4,7,10,85.2
+Aluno_23,27,Feminino,Não,11,Internato,Flashcards,5,6,10,82.9
+Aluno_24,23,Feminino,Não,1,Básico,Questões,2,7,9,92.3
+Aluno_25,26,Feminino,Não,9,Internato,Flashcards,5,8,10,92.9
+Aluno_26,27,Masculino,Sim,12,Internato,Flashcards,6,6,10,85.7
+Aluno_27,25,Feminino,Não,11,Internato,Resumos,7,5,9,74.9
+Aluno_28,25,Feminino,Não,6,Clínico,Flashcards,5,7,10,85.0
+Aluno_29,20,Masculino,Não,3,Básico,Resumos,2,8,9,79.7
+Aluno_30,22,Feminino,Sim,4,Básico,Resumos,2,8,10,80.9
+Aluno_31,25,Masculino,Não,12,Internato,Flashcards,6,5,10,78.5
+Aluno_32,26,Feminino,Não,11,Internato,Questões,2,8,9,78.5
+Aluno_33,27,Feminino,Não,4,Básico,Flashcards,1,10,9,87.8
+Aluno_34,18,Masculino,Sim,3,Básico,Mapas Mentais,5,7,10,84.1
+Aluno_35,26,Masculino,Não,10,Internato,Questões,8,6,9,78.3
+Aluno_36,18,Masculino,Não,3,Básico,Resumos,2,7,7,76.4
+Aluno_37,21,Feminino,Sim,3,Básico,Resumos,4,6,10,77.1
+Aluno_38,24,Feminino,Não,4,Básico,Flashcards,4,6,10,77.1
+Aluno_39,24,Masculino,Não,7,Clínico,Mapas Mentais,9,4,7,66.5
+Aluno_40,20,Feminino,Sim,4,Básico,Questões,5,7,10,93.7
+Aluno_41,23,Feminino,Sim,9,Internato,Resumos,5,4,10,85.7
+Aluno_42,22,Feminino,Não,1,Básico,Questões,0,10,6,78.0
+Aluno_43,23,Feminino,Sim,8,Clínico,Resumos,2,8,10,89.3
+Aluno_44,24,Masculino,Não,7,Clínico,Questões,5,6,10,82.8
+Aluno_45,21,Feminino,Sim,2,Básico,Mapas Mentais,1,7,8,77.2
+Aluno_46,23,Masculino,Não,8,Clínico,Questões,3,6,10,86.5
+Aluno_47,25,Feminino,Sim,1,Básico,Resumos,1,9,9,86.3
+Aluno_48,27,Feminino,Não,11,Internato,Questões,4,7,10,80.2
+Aluno_49,22,Feminino,Não,12,Internato,Questões,9,2,6,73.7
+Aluno_50,25,Feminino,Não,9,Internato,Questões,6,4,8,81.9
+Aluno_51,23,Masculino,Não,9,Internato,Questões,5,6,10,80.5
+Aluno_52,23,Masculino,Sim,2,Básico,Mapas Mentais,5,8,10,84.6
+Aluno_53,22,Masculino,Não,7,Clínico,Flashcards,4,6,10,83.0
+Aluno_54,25,Masculino,Sim,10,Internato,Questões,4,5,10,85.5
+Aluno_55,23,Masculino,Sim,3,Básico,Mapas Mentais,5,6,10,77.8
+Aluno_56,25,Masculino,Sim,7,Clínico,Questões,5,6,10,83.3
+Aluno_57,24,Feminino,Não,12,Internato,Resumos,5,3,10,74.4
+Aluno_58,24,Feminino,Não,10,Internato,Flashcards,5,6,10,87.7
+Aluno_59,24,Feminino,Não,9,Internato,Questões,4,6,10,87.2
+Aluno_60,21,Feminino,Não,4,Básico,Flashcards,1,9,8,80.4
+Aluno_61,30,Feminino,Sim,12,Internato,Flashcards,8,6,10,89.1
+Aluno_62,21,Feminino,Não,1,Básico,Mapas Mentais,5,7,10,69.1
+Aluno_63,18,Masculino,Não,2,Básico,Resumos,0,9,7,77.7
+Aluno_64,22,Feminino,Não,1,Básico,Resumos,3,6,9,69.2
+Aluno_65,30,Feminino,Sim,12,Internato,Flashcards,5,9,10,89.1
+Aluno_66,25,Feminino,Não,5,Clínico,Mapas Mentais,3,7,10,76.0
+Aluno_67,19,Feminino,Não,5,Clínico,Flashcards,3,7,10,79.3
+Aluno_68,25,Masculino,Sim,11,Internato,Mapas Mentais,5,6,10,84.6
+Aluno_69,26,Feminino,Sim,7,Clínico,Questões,4,7,10,87.6
+Aluno_70,23,Masculino,Não,9,Internato,Questões,4,6,10,84.4
+Aluno_71,25,Masculino,Não,9,Internato,Questões,6,5,10,81.3
+Aluno_72,23,Feminino,Sim,3,Básico,Mapas Mentais,3,7,10,85.4
+Aluno_73,20,Feminino,Não,3,Básico,Resumos,2,8,10,82.3
+Aluno_74,21,Masculino,Sim,3,Básico,Flashcards,1,8,8,76.3
+Aluno_75,17,Masculino,Não,4,Básico,Mapas Mentais,2,7,10,82.5
+Aluno_76,22,Masculino,Não,8,Clínico,Resumos,6,6,9,72.2
+Aluno_77,22,Masculino,Não,6,Clínico,Questões,5,6,10,76.8
+Aluno_78,22,Feminino,Não,8,Clínico,Questões,3,9,10,87.8
+Aluno_79,24,Feminino,Sim,1,Básico,Questões,2,5,8,86.9
+Aluno_80,21,Feminino,Sim,8,Clínico,Flashcards,6,6,10,89.4
+Aluno_81,21,Masculino,Não,4,Básico,Mapas Mentais,1,10,8,76.0
+Aluno_82,26,Masculino,Não,11,Internato,Flashcards,7,3,10,75.1
+Aluno_83,23,Feminino,Não,1,Básico,Questões,1,8,10,86.7
+Aluno_84,21,Feminino,Sim,8,Clínico,Questões,6,5,10,94.8
+Aluno_85,24,Feminino,Sim,4,Básico,Resumos,2,6,8,77.9
+Aluno_86,23,Feminino,Sim,6,Clínico,Resumos,1,8,9,83.9
+Aluno_87,22,Masculino,Não,8,Clínico,Mapas Mentais,2,7,10,82.6
+Aluno_88,23,Masculino,Sim,4,Básico,Flashcards,3,9,10,89.5
+Aluno_89,22,Masculino,Não,3,Básico,Questões,3,8,10,85.0
+Aluno_90,23,Feminino,Não,9,Internato,Flashcards,4,8,10,85.2
+Aluno_91,22,Feminino,Não,3,Básico,Mapas Mentais,4,7,10,80.2
+Aluno_92,24,Masculino,Sim,9,Internato,Flashcards,3,6,9,81.1
+Aluno_93,21,Masculino,Não,2,Básico,Questões,2,7,8,81.8
+Aluno_94,22,Masculino,Não,2,Básico,Flashcards,0,9,6,74.5
+Aluno_95,24,Masculino,Não,2,Básico,Flashcards,1,7,7,77.0
+Aluno_96,21,Feminino,Não,6,Clínico,Flashcards,4,7,10,84.2
+Aluno_97,26,Feminino,Não,3,Básico,Mapas Mentais,1,8,9,79.5
+Aluno_98,21,Feminino,Não,9,Internato,Flashcards,5,6,10,75.0
+Aluno_99,22,Feminino,Sim,4,Básico,Resumos,5,7,10,87.2
+Aluno_100,22,Feminino,Sim,1,Básico,Flashcards,1,9,8,86.3
+Aluno_101,23,Feminino,Não,4,Básico,Flashcards,4,6,10,87.0
+Aluno_102,19,Masculino,Não,1,Básico,Questões,0,10,8,71.8
+Aluno_103,22,Feminino,Não,5,Clínico,Questões,4,6,10,93.4
+Aluno_104,21,Feminino,Não,4,Básico,Mapas Mentais,5,7,10,79.9
+Aluno_105,23,Masculino,Sim,8,Clínico,Flashcards,1,9,8,87.3
+Aluno_106,26,Feminino,Sim,8,Clínico,Questões,4,6,10,83.8
+Aluno_107,24,Feminino,Não,7,Clínico,Questões,5,6,10,87.5
+Aluno_108,20,Masculino,Não,3,Básico,Resumos,2,7,10,74.3
+Aluno_109,22,Feminino,Sim,1,Básico,Mapas Mentais,2,9,9,81.2
+Aluno_110,21,Feminino,Não,1,Básico,Resumos,1,8,7,81.3
+Aluno_111,28,Feminino,Sim,12,Internato,Questões,6,5,10,85.7
+Aluno_112,27,Feminino,Não,11,Internato,Questões,6,6,10,85.9
+Aluno_113,20,Masculino,Sim,3,Básico,Resumos,4,6,10,83.5
+Aluno_114,22,Masculino,Não,6,Clínico,Flashcards,4,5,10,81.5
+Aluno_115,25,Masculino,Sim,7,Clínico,Flashcards,5,4,10,81.6
+Aluno_116,24,Masculino,Não,6,Clínico,Mapas Mentais,3,8,10,81.5
+Aluno_117,23,Masculino,Sim,6,Clínico,Resumos,3,6,9,86.8
+Aluno_118,23,Feminino,Sim,6,Clínico,Flashcards,3,9,10,90.3
+Aluno_119,24,Masculino,Sim,3,Básico,Mapas Mentais,3,5,9,76.5
+Aluno_120,22,Feminino,Não,6,Clínico,Flashcards,3,9,10,91.7
+Aluno_121,25,Masculino,Não,8,Clínico,Flashcards,5,6,10,85.4
+Aluno_122,25,Masculino,Sim,11,Internato,Questões,9,4,5,73.7
+Aluno_123,25,Feminino,Não,11,Internato,Questões,7,4,10,84.6
+Aluno_124,23,Feminino,Não,2,Básico,Mapas Mentais,2,8,10,77.4
+Aluno_125,24,Feminino,Não,5,Clínico,Questões,5,6,10,91.5
+Aluno_126,22,Feminino,Sim,1,Básico,Mapas Mentais,1,10,8,77.8
+Aluno_127,29,Masculino,Não,12,Internato,Flashcards,3,7,10,83.7
+Aluno_128,21,Masculino,Sim,1,Básico,Resumos,0,9,7,73.1
+Aluno_129,24,Feminino,Sim,5,Clínico,Flashcards,1,8,8,83.1
+Aluno_130,25,Feminino,Não,12,Internato,Questões,6,5,10,84.8
+Aluno_131,22,Feminino,Sim,3,Básico,Flashcards,3,8,10,90.3
+Aluno_132,22,Feminino,Não,4,Básico,Resumos,6,4,9,74.9
+Aluno_133,22,Feminino,Não,3,Básico,Resumos,3,6,9,82.7
+Aluno_134,22,Feminino,Não,1,Básico,Resumos,2,9,9,82.5
+Aluno_135,19,Masculino,Não,1,Básico,Resumos,3,7,10,77.5
+Aluno_136,30,Feminino,Sim,12,Internato,Questões,3,7,10,93.4
+Aluno_137,24,Feminino,Sim,12,Internato,Flashcards,7,5,9,86.5
+Aluno_138,20,Masculino,Não,5,Clínico,Flashcards,5,6,10,76.1
+Aluno_139,25,Feminino,Sim,6,Clínico,Questões,2,7,9,89.1
+Aluno_140,23,Masculino,Sim,3,Básico,Resumos,4,6,10,82.8
+Aluno_141,27,Masculino,Sim,12,Internato,Questões,7,5,10,83.3
+Aluno_142,26,Feminino,Sim,9,Internato,Questões,4,6,10,93.5
+Aluno_143,22,Feminino,Sim,5,Clínico,Mapas Mentais,4,7,10,82.9
+Aluno_144,22,Feminino,Sim,8,Clínico,Flashcards,8,2,8,74.9
+Aluno_145,21,Feminino,Não,1,Básico,Flashcards,2,9,10,86.8
+Aluno_146,21,Feminino,Não,5,Clínico,Questões,4,7,10,86.6
+Aluno_147,23,Masculino,Não,3,Básico,Resumos,2,8,10,75.6
+Aluno_148,26,Feminino,Sim,12,Internato,Questões,5,7,10,83.7
+Aluno_149,19,Feminino,Sim,1,Básico,Mapas Mentais,3,9,10,92.9
+Aluno_150,21,Feminino,Sim,4,Básico,Resumos,2,9,10,83.1

@@ -238,3 +238,50 @@ p {
 .analysis-grid-item:hover::after {
   opacity: 1;
 }
+
+/* Antigravity Premium Design Spells */
+.premium-glow-card {
+  position: relative;
+  border: 1px solid rgba(99, 102, 241, 0.2) !important;
+  box-shadow: 0 0 20px rgba(99, 102, 241, 0.05);
+}
+
+.premium-glow-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  border-radius: inherit;
+  background: radial-gradient(circle at top right, rgba(99, 102, 241, 0.1), transparent);
+  pointer-events: none;
+}
+
+.stat-p-value {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+.stat-p-significant {
+  color: var(--color-primary);
+  text-shadow: 0 0 8px rgba(0, 255, 163, 0.3);
+  font-weight: 900;
+}
+
+@keyframes slide-up-reveal {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.reveal-premium {
+  animation: slide-up-reveal 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.chart-container-premium {
+  background: rgba(15, 23, 42, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.03);
+  border-radius: 1.5rem;
+  overflow: hidden;
+  transition: transform 0.4s ease;
+}
+
+.chart-container-premium:hover {
+  transform: scale(1.01);
+}

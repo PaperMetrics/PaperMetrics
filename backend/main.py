@@ -15,13 +15,14 @@ from typing import List, Optional, Dict, Any
 from scipy import stats
 from scipy.stats import fisher_exact
 from dotenv import load_dotenv
-import google.generativeai as genai
+from openai import OpenAI
 from sqlmodel import SQLModel, Field, create_engine, Session, select
 from statsmodels.stats.power import TTestIndPower
 from statsmodels.api import Logit, add_constant
 from lifelines import KaplanMeierFitter
 from lifelines.statistics import logrank_test
 from bs4 import BeautifulSoup
+from stats_engine import engine as premium_engine
 
 try:
     import pingouin as pg
@@ -32,34 +33,37 @@ except ImportError:
 # Carregar variáveis de ambiente
 load_dotenv()
 
-# Configurar Gemini
-GEMINI_KEY = os.getenv("GOOGLE_API_KEY")
-if GEMINI_KEY and GEMINI_KEY != "your_api_key_here":
-    genai.configure(api_key=GEMINI_KEY)
-    model = genai.GenerativeModel('gemini-2.0-flash')
+# Configurar OpenAI GPT
+OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+if OPENAI_KEY and OPENAI_KEY != "your_api_key_here":
+    openai_client = OpenAI(api_key=OPENAI_KEY)
 else:
-    model = None
+    openai_client = None
 
 import time
 
-def ask_gemini(prompt: str, max_retries: int = 2) -> str:
-    """Chama Gemini com retry automático em caso de rate limit."""
-    if not model:
+def ask_gpt(prompt: str, max_retries: int = 2) -> str:
+    """Chama OpenAI GPT com retry automático em caso de rate limit."""
+    if not openai_client:
         raise HTTPException(status_code=503, detail="Serviço de IA não configurado.")
 
     for attempt in range(max_retries + 1):
         try:
-            response = model.generate_content(prompt)
-            return response.text
+            response = openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7,
+            )
+            return response.choices[0].message.content
         except Exception as e:
             err_str = str(e)
-            if "429" in err_str or "quota" in err_str.lower():
+            if "429" in err_str or "rate" in err_str.lower() or "quota" in err_str.lower():
                 if attempt < max_retries:
                     wait = 5 * (attempt + 1)
-                    print(f"GEMINI: Rate limit. Tentativa {attempt+1}/{max_retries+1}. Esperando {wait}s...")
+                    print(f"GPT: Rate limit. Tentativa {attempt+1}/{max_retries+1}. Esperando {wait}s...")
                     time.sleep(wait)
                     continue
-                raise HTTPException(status_code=429, detail="Limite de uso da API Gemini excedido. Aguarde alguns minutos ou adicione billing ao projeto Google Cloud.")
+                raise HTTPException(status_code=429, detail="Limite de uso da API OpenAI excedido. Aguarde alguns minutos.")
             raise HTTPException(status_code=500, detail=f"Erro na IA: {err_str[:200]}")
 
 LOCAL_FALLBACK = {
@@ -448,48 +452,56 @@ def bin_numeric_groups(series, max_bins=5):
 def json_safe_df(df: pd.DataFrame) -> pd.DataFrame:
     return df.replace([np.nan, np.inf, -np.inf], None)
 
+def sanitize_chart_value(val):
+    """Converte valor para float seguro, substituindo NaN/Infinity por None."""
+    try:
+        f = float(val)
+        if np.isnan(f) or np.isinf(f):
+            return None
+        return f
+    except (TypeError, ValueError):
+        return None
+
 def clean_dict_values(d: Dict[str, Any]) -> Dict[str, Any]:
-    if not isinstance(d, dict):
-        if isinstance(d, dict):
-            return {k: clean_dict_values(v) for k, v in d.items()}
-        return d
-    new_dict = {}
-    for k, v in d.items():
-        if isinstance(v, dict):
-            new_dict[k] = clean_dict_values(v)
-        elif isinstance(v, (np.bool_, np.bool)):
-            new_dict[k] = bool(v)
-        elif isinstance(v, (np.integer,)):
-            new_dict[k] = int(v)
-        elif isinstance(v, (np.floating,)):
-            val = float(v)
-            new_dict[k] = None if (np.isnan(val) or np.isinf(val)) else val
-        elif isinstance(v, float) and (np.isnan(v) or np.isinf(v)):
-            new_dict[k] = None
-        elif isinstance(v, np.ndarray):
-            new_dict[k] = clean_dict_values(v.tolist())
-        elif isinstance(v, list):
-            cleaned = []
-            for x in v:
-                if isinstance(x, dict):
-                    cleaned.append(clean_dict_values(x))
-                elif isinstance(x, (np.bool_, np.bool)):
-                    cleaned.append(bool(x))
-                elif isinstance(x, (np.integer,)):
-                    cleaned.append(int(x))
-                elif isinstance(x, (np.floating,)):
-                    val = float(x)
-                    cleaned.append(None if (np.isnan(val) or np.isinf(val)) else val)
-                elif isinstance(x, float) and (np.isnan(x) or np.isinf(x)):
-                    cleaned.append(None)
-                elif isinstance(x, np.ndarray):
-                    cleaned.append(x.tolist())
-                else:
-                    cleaned.append(x)
-            new_dict[k] = cleaned
-        else:
-            new_dict[k] = v
-    return new_dict
+    if isinstance(d, dict):
+        new_dict = {}
+        for k, v in d.items():
+            if isinstance(v, dict):
+                new_dict[k] = clean_dict_values(v)
+            elif isinstance(v, (np.bool_, np.bool)):
+                new_dict[k] = bool(v)
+            elif isinstance(v, (np.integer,)):
+                new_dict[k] = int(v)
+            elif isinstance(v, (np.floating,)):
+                val = float(v)
+                new_dict[k] = None if (np.isnan(val) or np.isinf(val)) else val
+            elif isinstance(v, float) and (np.isnan(v) or np.isinf(v)):
+                new_dict[k] = None
+            elif isinstance(v, np.ndarray):
+                new_dict[k] = clean_dict_values(v.tolist())
+            elif isinstance(v, list):
+                cleaned = []
+                for x in v:
+                    if isinstance(x, dict):
+                        cleaned.append(clean_dict_values(x))
+                    elif isinstance(x, (np.bool_, np.bool)):
+                        cleaned.append(bool(x))
+                    elif isinstance(x, (np.integer,)):
+                        cleaned.append(int(x))
+                    elif isinstance(x, (np.floating,)):
+                        val = float(x)
+                        cleaned.append(None if (np.isnan(val) or np.isinf(val)) else val)
+                    elif isinstance(x, float) and (np.isnan(x) or np.isinf(x)):
+                        cleaned.append(None)
+                    elif isinstance(x, np.ndarray):
+                        cleaned.append(x.tolist())
+                    else:
+                        cleaned.append(x)
+                new_dict[k] = cleaned
+            else:
+                new_dict[k] = v
+        return new_dict
+    return d
 
 # Inicializar
 @app.on_event("startup")
@@ -594,7 +606,11 @@ async def analyze_protocol_v7(file: UploadFile = File(...)):
             print(f"REJECTED: Summary table detected -> {file.filename}")
             raise HTTPException(status_code=400, detail=msg)
         
-        ignore_patterns = r'\b(id|nº|nome|prontuario|data|sexo|registro|index|paciente|unidade|setor|atendimento)\b'
+        ignore_patterns = r'\b(id|nº|número|numero|nome|prontuario|data|sexo|registro|index|paciente|unidade|setor|atendimento|cpf|rg|matricula|codigo|código|chave|key|matrícula)\b'
+        
+        def is_meaningful_variable(col_name: str) -> bool:
+            """Retorna False para colunas que são apenas identificadores ou não têm valor estatístico."""
+            return not bool(re.search(ignore_patterns, col_name.lower()))
         
         # ============================================================
         # PASSO 1: Classificação detalhada de cada variável
@@ -667,6 +683,8 @@ async def analyze_protocol_v7(file: UploadFile = File(...)):
                     b_match_rev = any(p in a_lower for p in partners)
                     
                     if (a_match and b_match) or (a_match_rev and b_match_rev):
+                        if not is_meaningful_variable(col_a) or not is_meaningful_variable(col_b):
+                            break
                         info_a = var_info.get(col_a, {})
                         info_b = var_info.get(col_b, {})
                         if info_a.get('is_numeric') and info_b.get('is_numeric'):
@@ -687,7 +705,7 @@ async def analyze_protocol_v7(file: UploadFile = File(...)):
         # ============================================================
         # PASSO 3: Identificar correlações entre variáveis numéricas
         # ============================================================
-        numeric_cols = [c for c in df.columns if var_info.get(c, {}).get('is_numeric') and c not in used_in_pair]
+        numeric_cols = [c for c in df.columns if var_info.get(c, {}).get('is_numeric') and c not in used_in_pair and is_meaningful_variable(c)]
         
         correlation_pairs = []
         for i, col_a in enumerate(numeric_cols):
@@ -753,7 +771,7 @@ async def analyze_protocol_v7(file: UploadFile = File(...)):
         # ============================================================
         # PASSO 4: Identificar comparações de grupos (categórica vs numérica)
         # ============================================================
-        categorical_cols = [c for c in df.columns if not var_info.get(c, {}).get('is_numeric') and not re.search(ignore_patterns, c.lower()) and var_info.get(c, {}).get('unique_count', 0) <= 10]
+        categorical_cols = [c for c in df.columns if not var_info.get(c, {}).get('is_numeric') and is_meaningful_variable(c) and var_info.get(c, {}).get('unique_count', 0) <= 10]
         
         group_comparisons = []
         for cat_col in categorical_cols:
@@ -796,101 +814,142 @@ async def analyze_protocol_v7(file: UploadFile = File(...)):
         # ============================================================
         # PASSO 5: Montar protocolo final
         # ============================================================
+        # ============================================================
+        # PASSO 5: Montar protocolo final com Escalonamento de Relevância
+        # ============================================================
         variables = []
         var_id = 0
+        total_rows = len(df)
         
+        def calculate_relevance(col_name, info):
+            """Calcula score de relevância (0-100)."""
+            if not info: return 50
+            completion = (info['n'] / total_rows) * 60
+            diversity = min(info['unique_count'] / 10, 1.0) * 20
+            # Bonus para variáveis clínicas conhecidas
+            clinical_bonus = 0
+            name_lower = col_name.lower()
+            if any(w in name_lower for w in ['idade', 'age', 'sex', 'gender', 'outcome', 'desfecho', 'morte', 'alta', 'intern', 'weight', 'peso', 'imc', 'bmi']):
+                clinical_bonus = 20
+            return min(completion + diversity + clinical_bonus, 100)
+
         # 5a. Pares pareados
         for pair in detected_pairs:
             var_id += 1
+            rel = max(calculate_relevance(pair['col_a'], var_info.get(pair['col_a'])), 
+                      calculate_relevance(pair['col_b'], var_info.get(pair['col_b'])))
             variables.append({
                 "id": f"V{var_id:03d}",
                 "name": f"{pair['col_a']} ↔ {pair['col_b']}",
+                "variable_group": pair['col_a'],
                 "type": pair['type'],
                 "unique_count": 0,
                 "recommended_test": pair['test'],
                 "test_options": pair['test_options'],
                 "rationale": pair['rationale'],
+                "relevance": rel,
+                "is_selected": rel > 70, 
                 "pair": {"col_a": pair['col_a'], "col_b": pair['col_b']}
             })
         
         # 5b. Correlações
         for pair in correlation_pairs:
             var_id += 1
+            rel = max(calculate_relevance(pair['col_a'], var_info.get(pair['col_a'])), 
+                      calculate_relevance(pair['col_b'], var_info.get(pair['col_b'])))
             variables.append({
                 "id": f"V{var_id:03d}",
                 "name": f"{pair['col_a']} ↔ {pair['col_b']}",
+                "variable_group": pair['col_a'],
                 "type": pair['type'],
                 "unique_count": 0,
                 "recommended_test": pair['test'],
                 "test_options": pair['test_options'],
                 "rationale": pair['rationale'],
+                "relevance": rel,
+                "is_selected": rel > 75,
                 "pair": {"col_a": pair['col_a'], "col_b": pair['col_b']}
             })
         
         # 5c. Comparações de grupos
         for comp in group_comparisons:
             var_id += 1
+            rel = max(calculate_relevance(comp['predictor'], var_info.get(comp['predictor'])), 
+                      calculate_relevance(comp['outcome'], var_info.get(comp['outcome'])))
             variables.append({
                 "id": f"V{var_id:03d}",
                 "name": f"{comp['predictor']} → {comp['outcome']}",
+                "variable_group": comp['predictor'],
                 "type": comp['type'],
                 "unique_count": var_info[comp['predictor']]['unique_count'],
                 "recommended_test": comp['test'],
                 "test_options": comp['test_options'],
                 "rationale": comp['rationale'],
+                "relevance": rel,
+                "is_selected": rel > 70,
                 "pair": {"predictor": comp['predictor'], "outcome": comp['outcome']}
             })
         
-        # 5c2. Regressão Logística (outcome binário/categórico → preditores)
-        binary_outcomes = [c for c in df.columns if var_info.get(c, {}).get('unique_count') == 2 and not var_info.get(c, {}).get('is_numeric')]
-        numeric_predictors = [c for c in df.columns if var_info.get(c, {}).get('is_numeric') and c not in used_in_pair]
+        # 5c2. Regressão Logística
+        binary_outcomes = [c for c in df.columns if var_info.get(c, {}).get('unique_count') == 2 and not var_info.get(c, {}).get('is_numeric') and is_meaningful_variable(c)]
+        numeric_predictors = [c for c in df.columns if var_info.get(c, {}).get('is_numeric') and c not in used_in_pair and is_meaningful_variable(c)]
         
         for bin_out in binary_outcomes:
             if len(numeric_predictors) >= 1:
                 var_id += 1
                 pred_names = ', '.join(numeric_predictors[:5])
+                rel = calculate_relevance(bin_out, var_info.get(bin_out)) + 15
                 variables.append({
                     "id": f"V{var_id:03d}",
                     "name": f"Regressão Logística → {bin_out}",
+                    "variable_group": bin_out,
                     "type": "Regressão Logística",
                     "unique_count": 2,
                     "recommended_test": "Regressão Logística",
                     "test_options": ["Regressão Logística", "Qui-Quadrado (X²)", "Teste Exato de Fisher", "Excluir"],
-                    "rationale": f"Modelo preditivo para '{bin_out}' usando {len(numeric_predictors)} preditor(es) numérico(s): {pred_names}.",
+                    "rationale": f"Modelo preditivo para '{bin_out}' usando {len(numeric_predictors)} preditor(es) numérico(s).",
+                    "relevance": min(rel, 100),
+                    "is_selected": True, 
                     "pair": {"predictor": bin_out, "outcome": bin_out, "logistic_predictors": numeric_predictors[:5]}
                 })
         
-        # 5d. Variáveis individuais descritivas (TODAS as variáveis, mesmo as usadas em pares)
+        # 5d. Variáveis individuais descritivas
         for col in df.columns:
-            if re.search(ignore_patterns, col.lower()):
-                continue
+            if not is_meaningful_variable(col): continue
             vi = var_info.get(col, {})
             var_id += 1
+            rel = calculate_relevance(col, vi)
             if vi.get('is_numeric'):
                 variables.append({
                     "id": f"V{var_id:03d}",
                     "name": col,
+                    "variable_group": col,
                     "type": "Descritiva (Numérica)",
                     "unique_count": vi['unique_count'],
                     "recommended_test": "Estatística Descritiva",
                     "test_options": ["Estatística Descritiva"],
-                    "rationale": f"Estatísticas descritivas de '{col}' (n={vi['n']}, normalidade: {vi.get('normality', '?')}).",
+                    "rationale": f"Estatísticas descritivas de '{col}'.",
+                    "relevance": rel,
+                    "is_selected": rel > 50,
                     "pair": {"col_a": col}
                 })
             else:
                 variables.append({
                     "id": f"V{var_id:03d}",
                     "name": col,
+                    "variable_group": col,
                     "type": "Descritiva (Categórica)",
                     "unique_count": vi['unique_count'],
                     "recommended_test": "Estatística Descritiva",
                     "test_options": ["Estatística Descritiva", "Qui-Quadrado (X²)", "Teste Exato de Fisher"],
-                    "rationale": f"Distribuição de frequências de '{col}' ({vi['unique_count']} categorias).",
+                    "rationale": f"Distribuição de frequências de '{col}'.",
+                    "relevance": rel,
+                    "is_selected": rel > 50,
                     "pair": {"col_a": col}
                 })
         
-        # 5e. Outcome sugerido (última coluna numérica relevante)
-        candidate_cols = [c for c in df.columns if not re.search(ignore_patterns, c.lower())]
+        # 5e. Outcome sugerido
+        candidate_cols = [c for c in df.columns if is_meaningful_variable(c)]
         outcome_suggested = candidate_cols[-1] if candidate_cols else df.columns[-1]
         outcome_series = pd.to_numeric(df[outcome_suggested].astype(str).str.replace(',', '.'), errors='coerce')
         is_outcome_numeric = not outcome_series.isna().all() and len(outcome_series.dropna().unique()) >= 5
@@ -898,13 +957,17 @@ async def analyze_protocol_v7(file: UploadFile = File(...)):
         variables.insert(0, {
             "id": "V000",
             "name": outcome_suggested,
+            "variable_group": outcome_suggested,
             "type": "DESFECHO (Numérico)" if is_outcome_numeric else "DESFECHO (Categórico)",
             "unique_count": int(len(df[outcome_suggested].dropna().unique())),
             "recommended_test": "Estatística Descritiva",
             "test_options": ["Estatística Descritiva"],
             "rationale": "Análise descritiva/perfil do desfecho principal selecionado.",
+            "relevance": 100,
+            "is_selected": True,
             "pair": {"col_a": outcome_suggested}
         })
+
         
         # Metadata para o frontend saber que há pares inteligentes
         meta = {
@@ -1354,24 +1417,48 @@ def generate_interpretation(test_type, stat, p_val, effect_size=None, post_hoc=N
     
     return " ".join(interpretations)
 
-# ============================================================
-# PINGOUIN-BASED STATISTICAL ENGINE
-# ============================================================
+# Helpers para robustez estatística
+def safe_get_pval(df):
+    """Extrai o p-valor de um DataFrame do Pingouin buscando nomes comuns."""
+    for col in ['p-val', 'p-unc', 'P-unc', 'pval', 'p_val', 'p-corr']:
+        if col in df.columns:
+            return df[col].values[0]
+    return None
+
+def round_res(val, decimals=4):
+    """Arredonda valor garantindo que NaN/Inf virem None (null no JSON)."""
+    try:
+        if val is None:
+            return None
+        f_val = float(val)
+        if np.isnan(f_val) or np.isinf(f_val):
+            return None
+        return round(f_val, decimals)
+    except:
+        return None
 
 def pg_ttest_ind(g1, g2):
     """Teste T independente com Pingouin (fallback: scipy)."""
     try:
-        if PINGOUIN_AVAILABLE:
+        if PINGOUIN_AVAILABLE and len(g1) >= 2 and len(g2) >= 2:
+            # Caso especial: variância zero em ambos (ex: [5,5,5] vs [5,5,5])
+            if np.var(g1) == 0 and np.var(g2) == 0 and np.mean(g1) == np.mean(g2):
+                return {
+                    "statistic": 0.0, "p_value": 1.0, "ci_lower": 0.0, "ci_upper": 0.0,
+                    "cohens_d": 0.0, "engine": "pingouin", "warning": "Variância zero em ambos os grupos."
+                }
+            
             result = pg.ttest(g1, g2, paired=False)
-            ci95 = result["CI95"].values[0]
+            ci95 = result["CI95"].values[0] if "CI95" in result.columns else [None, None]
+            
             return {
-                "statistic": round(float(result["T"].values[0]), 4),
-                "p_value": round(float(result["p_val"].values[0]), 4),
-                "ci_lower": round(float(ci95[0]), 4),
-                "ci_upper": round(float(ci95[1]), 4),
-                "cohens_d": round(float(result["cohen_d"].values[0]), 4),
-                "bf10": round(float(result["BF10"].values[0]), 4) if "BF10" in result.columns else None,
-                "power": round(float(result["power"].values[0]), 4) if "power" in result.columns else None,
+                "statistic": round_res(result["T"].values[0]),
+                "p_value": round_res(safe_get_pval(result)),
+                "ci_lower": round_res(ci95[0]),
+                "ci_upper": round_res(ci95[1]),
+                "cohens_d": round_res(result["cohen_d"].values[0]) if "cohen_d" in result.columns else None,
+                "bf10": round_res(result["BF10"].values[0]) if "BF10" in result.columns else None,
+                "power": round_res(result["power"].values[0]) if "power" in result.columns else None,
                 "engine": "pingouin"
             }
     except Exception as e:
@@ -1379,15 +1466,15 @@ def pg_ttest_ind(g1, g2):
     
     res = stats.ttest_ind(g1, g2)
     n1, n2 = len(g1), len(g2)
-    s1, s2 = np.var(g1, ddof=1), np.var(g2, ddof=1)
+    s1, s2 = np.var(g1, ddof=1), np.var(g2, np.var(g2, ddof=1) if len(g2) > 1 else 0)
     s_pooled = np.sqrt(((n1-1)*s1 + (n2-1)*s2) / (n1+n2-2)) if (n1+n2-2) > 0 else 0
     cohens_d = float((np.mean(g1) - np.mean(g2)) / s_pooled) if s_pooled > 0 else 0
     return {
-        "statistic": round(float(res.statistic), 4),
-        "p_value": round(float(res.pvalue), 4),
+        "statistic": round_res(res.statistic),
+        "p_value": round_res(res.pvalue),
         "ci_lower": None,
         "ci_upper": None,
-        "cohens_d": round(cohens_d, 4),
+        "cohens_d": round_res(cohens_d),
         "bf10": None,
         "power": None,
         "engine": "scipy"
@@ -1396,17 +1483,17 @@ def pg_ttest_ind(g1, g2):
 def pg_ttest_paired(a, b):
     """Teste T pareado com Pingouin (fallback: scipy)."""
     try:
-        if PINGOUIN_AVAILABLE:
+        if PINGOUIN_AVAILABLE and len(a) >= 2:
             result = pg.ttest(a, b, paired=True)
-            ci95 = result["CI95"].values[0]
+            ci95 = result["CI95"].values[0] if "CI95" in result.columns else [None, None]
             return {
-                "statistic": round(float(result["T"].values[0]), 4),
-                "p_value": round(float(result["p_val"].values[0]), 4),
-                "ci_lower": round(float(ci95[0]), 4),
-                "ci_upper": round(float(ci95[1]), 4),
-                "cohens_d": round(float(result["cohen_d"].values[0]), 4),
-                "bf10": round(float(result["BF10"].values[0]), 4) if "BF10" in result.columns else None,
-                "power": round(float(result["power"].values[0]), 4) if "power" in result.columns else None,
+                "statistic": round_res(result["T"].values[0]),
+                "p_value": round_res(safe_get_pval(result)),
+                "ci_lower": round_res(ci95[0]),
+                "ci_upper": round_res(ci95[1]),
+                "cohens_d": round_res(result["cohen_d"].values[0]) if "cohen_d" in result.columns else None,
+                "bf10": round_res(result["BF10"].values[0]) if "BF10" in result.columns else None,
+                "power": round_res(result["power"].values[0]) if "power" in result.columns else None,
                 "engine": "pingouin"
             }
     except Exception as e:
@@ -1430,38 +1517,34 @@ def pg_ttest_paired(a, b):
 def pg_mannwhitney(g1, g2):
     """Mann-Whitney U com Pingouin (fallback: scipy)."""
     try:
-        if PINGOUIN_AVAILABLE:
+        if PINGOUIN_AVAILABLE and len(g1) >= 1 and len(g2) >= 1:
             result = pg.mwu(g1, g2)
             return {
-                "statistic": round(float(result["U_val"].values[0]), 4),
-                "p_value": round(float(result["p_val"].values[0]), 4),
-                "cohens_d": round(float(result["CLES"].values[0]), 4) if "CLES" in result.columns else None,
+                "statistic": round_res(result["U_val"].values[0]),
+                "p_value": round_res(safe_get_pval(result)),
+                "cohens_d": round_res(result["CLES"].values[0]) if "CLES" in result.columns else None,
                 "engine": "pingouin"
             }
     except Exception as e:
         print(f"Pingouin mwu fallback: {e}")
     
     res = stats.mannwhitneyu(g1, g2)
-    n1, n2 = len(g1), len(g2)
-    s1, s2 = np.var(g1, ddof=1), np.var(g2, ddof=1)
-    s_pooled = np.sqrt(((n1-1)*s1 + (n2-1)*s2) / (n1+n2-2)) if (n1+n2-2) > 0 else 0
-    cohens_d = float((np.mean(g1) - np.mean(g2)) / s_pooled) if s_pooled > 0 else 0
     return {
-        "statistic": round(float(res.statistic), 4),
-        "p_value": round(float(res.pvalue), 4),
-        "cohens_d": round(cohens_d, 4),
+        "statistic": round_res(res.statistic),
+        "p_value": round_res(res.pvalue),
+        "cohens_d": None,
         "engine": "scipy"
     }
 
 def pg_wilcoxon(a, b):
     """Wilcoxon pareado com Pingouin (fallback: scipy)."""
     try:
-        if PINGOUIN_AVAILABLE:
+        if PINGOUIN_AVAILABLE and len(a) >= 2:
             result = pg.wilcoxon(a, b)
             return {
-                "statistic": round(float(result["W_val"].values[0]), 4),
-                "p_value": round(float(result["p_val"].values[0]), 4),
-                "cohens_d": round(float(result["CLES"].values[0]), 4) if "CLES" in result.columns else None,
+                "statistic": round_res(result["W_val"].values[0]),
+                "p_value": round_res(safe_get_pval(result)),
+                "cohens_d": round_res(result["CLES"].values[0]) if "CLES" in result.columns else None,
                 "engine": "pingouin"
             }
     except Exception as e:
@@ -1481,13 +1564,13 @@ def pg_wilcoxon(a, b):
 def pg_anova(df_in, dv, between):
     """ANOVA One-Way com Pingouin (fallback: scipy)."""
     try:
-        if PINGOUIN_AVAILABLE:
+        if PINGOUIN_AVAILABLE and len(df_in) >= 3:
             result = pg.anova(data=df_in, dv=dv, between=between, detailed=True)
             return {
-                "statistic": round(float(result["F"].values[0]), 4),
-                "p_value": round(float(result["p_unc"].values[0]), 4),
-                "eta_squared": round(float(result["np2"].values[0]), 4),
-                "power": round(float(result["power"].values[0]), 4) if "power" in result.columns else None,
+                "statistic": round_res(result["F"].values[0]),
+                "p_value": round_res(safe_get_pval(result)),
+                "eta_squared": round_res(result["np2"].values[0]) if "np2" in result.columns else None,
+                "power": round_res(result["power"].values[0]) if "power" in result.columns else None,
                 "engine": "pingouin"
             }
     except Exception as e:
@@ -1516,19 +1599,16 @@ def pg_anova(df_in, dv, between):
 def pg_kruskal(df_in, dv, between):
     """Kruskal-Wallis com Pingouin (fallback: scipy)."""
     try:
-        if PINGOUIN_AVAILABLE:
+        if PINGOUIN_AVAILABLE and len(df_in) >= 3:
             result = pg.kruskal(data=df_in, dv=dv, between=between)
             # Pingouin >=0.5 retorna 'eta2'; versões antigas retornavam 'np2'
-            if "eta2" in result.columns:
-                eta2_val = float(result["eta2"].values[0])
-            elif "np2" in result.columns:
-                eta2_val = float(result["np2"].values[0])
-            else:
-                eta2_val = 0.0
+            eta2_col = "eta2" if "eta2" in result.columns else "np2" if "np2" in result.columns else None
+            eta2_val = float(result[eta2_col].values[0]) if eta2_col else 0.0
+            
             return {
-                "statistic": round(float(result["H"].values[0]), 4),
-                "p_value": round(float(result["p_unc"].values[0]), 4),
-                "eta_squared": round(eta2_val, 4),
+                "statistic": round_res(result["H"].values[0]),
+                "p_value": round_res(safe_get_pval(result)),
+                "eta_squared": round_res(eta2_val),
                 "engine": "pingouin"
             }
     except Exception as e:
@@ -1556,17 +1636,18 @@ def pg_kruskal(df_in, dv, between):
 def pg_pearson(x, y):
     """Correlação de Pearson com Pingouin (fallback: scipy)."""
     try:
-        if PINGOUIN_AVAILABLE:
+        if PINGOUIN_AVAILABLE and len(x) >= 3:
             result = pg.corr(x, y, method="pearson")
-            ci95 = result["CI95"].values[0]
+            ci95 = result["CI95"].values[0] if "CI95" in result.columns else [None, None]
+            r_val = float(result["r"].values[0])
             return {
-                "statistic": round(float(result["r"].values[0]), 4),
-                "p_value": round(float(result["p_val"].values[0]), 4),
-                "ci_lower": round(float(ci95[0]), 4),
-                "ci_upper": round(float(ci95[1]), 4),
-                "r_squared": round(float(result["r"].values[0] ** 2), 4),
-                "bf10": round(float(result["BF10"].values[0]), 4) if "BF10" in result.columns else None,
-                "power": round(float(result["power"].values[0]), 4) if "power" in result.columns else None,
+                "statistic": round_res(r_val),
+                "p_value": round_res(safe_get_pval(result)),
+                "ci_lower": round_res(ci95[0]),
+                "ci_upper": round_res(ci95[1]),
+                "r_squared": round_res(r_val ** 2),
+                "bf10": round_res(result["BF10"].values[0]) if "BF10" in result.columns else None,
+                "power": round_res(result["power"].values[0]) if "power" in result.columns else None,
                 "engine": "pingouin"
             }
     except Exception as e:
@@ -1574,11 +1655,11 @@ def pg_pearson(x, y):
     
     res = stats.pearsonr(x, y)
     return {
-        "statistic": round(float(res.statistic), 4),
-        "p_value": round(float(res.pvalue), 4),
+        "statistic": round_res(res.statistic),
+        "p_value": round_res(res.pvalue),
         "ci_lower": None,
         "ci_upper": None,
-        "r_squared": round(float(res.statistic ** 2), 4),
+        "r_squared": round_res(res.statistic ** 2),
         "bf10": None,
         "power": None,
         "engine": "scipy"
@@ -1587,19 +1668,18 @@ def pg_pearson(x, y):
 def pg_spearman(x, y):
     """Correlação de Spearman com Pingouin (fallback: scipy)."""
     try:
-        if PINGOUIN_AVAILABLE:
+        if PINGOUIN_AVAILABLE and len(x) >= 3:
             result = pg.corr(x, y, method="spearman")
-            ci95 = result["CI95"].values[0]
-            # Pingouin retorna 'r' para ambos pearson e spearman em pg.corr()
+            ci95 = result["CI95"].values[0] if "CI95" in result.columns else [None, None]
             rho_val = float(result["r"].values[0]) if "r" in result.columns else float(result["rho"].values[0])
             return {
-                "statistic": round(rho_val, 4),
-                "p_value": round(float(result["p_val"].values[0]), 4),
-                "ci_lower": round(float(ci95[0]), 4),
-                "ci_upper": round(float(ci95[1]), 4),
-                "r_squared": round(rho_val ** 2, 4),
-                "bf10": round(float(result["BF10"].values[0]), 4) if "BF10" in result.columns else None,
-                "power": round(float(result["power"].values[0]), 4) if "power" in result.columns else None,
+                "statistic": round_res(rho_val),
+                "p_value": round_res(safe_get_pval(result)),
+                "ci_lower": round_res(ci95[0]),
+                "ci_upper": round_res(ci95[1]),
+                "r_squared": round_res(rho_val ** 2),
+                "bf10": round_res(result["BF10"].values[0]) if "BF10" in result.columns else None,
+                "power": round_res(result["power"].values[0]) if "power" in result.columns else None,
                 "engine": "pingouin"
             }
     except Exception as e:
@@ -1727,108 +1807,57 @@ def pg_logistic_regression(df_in, predictor_cols, outcome_col):
         return None
 
 def pg_linear_regression(x_vals, y_vals, x_name="X", y_name="Y"):
-    """Regressão Linear Simples via Pingouin (com fallback para scipy).
-    
-    Retorna: slope, intercept, R², IC95% para slope, p-valor e interpretação em PT-BR.
-    Engine: pingouin se disponível, scipy como fallback.
-    """
+    """Regressão Linear Simples via Pingouin (com fallback para scipy)."""
     try:
         x = np.array(x_vals, dtype=float)
         y = np.array(y_vals, dtype=float)
-        mask = ~np.isnan(x) & ~np.isnan(y)
+        mask = ~np.isnan(x) & ~np.isnan(y) & np.isfinite(x) & np.isfinite(y)
         x, y = x[mask], y[mask]
-        if len(x) < 5:
-            return None
+        if len(x) < 3: return None
 
-        # — Tenta Pingouin primeiro —
         if PINGOUIN_AVAILABLE:
-            df_lr = pd.DataFrame({x_name: x, y_name: y})
-            res = pg.linear_regression(df_lr[[x_name]], df_lr[y_name], add_intercept=True)
-            # res tem colunas: names, coef, se, T, pval, r2, adj_r2, CI[2.5%], CI[97.5%]
-            slope_row = res[res['names'] == x_name]
-            if slope_row.empty:
-                slope_row = res.iloc[-1]  # último coeficiente
-            else:
-                slope_row = slope_row.iloc[0]
+            try:
+                df_lr = pd.DataFrame({x_name: x, y_name: y})
+                res = pg.linear_regression(df_lr[[x_name]], df_lr[y_name], add_intercept=True)
+                
+                slope_row = res[res['names'] == x_name]
+                if slope_row.empty: 
+                    slope_row = res.iloc[-1]
+                else: 
+                    slope_row = slope_row.iloc[0]
 
-            slope     = float(slope_row['coef'])
-            p_val     = float(slope_row['pval'])
-            ci_low    = float(slope_row['CI[2.5%]'])
-            ci_high   = float(slope_row['CI[97.5%]'])
-            r2        = float(res['r2'].iloc[0])
+                slope = float(slope_row['coef'])
+                p_val = round_res(safe_get_pval(res[res['names'] == x_name])) if not res[res['names'] == x_name].empty else 1.0
+                
+                ci_low = float(slope_row.get('CI[2.5%]', 0))
+                ci_high = float(slope_row.get('CI[97.5%]', 0))
+                r2 = float(res['r2'].iloc[0])
+                intercept = float(res[res['names'] == 'Intercept']['coef'].iloc[0]) if not res[res['names'] == 'Intercept'].empty else 0.0
 
-            intercept_row = res[res['names'] == 'Intercept']
-            intercept = float(intercept_row['coef'].iloc[0]) if not intercept_row.empty else 0.0
+                direction = "positiva" if slope > 0 else "negativa"
+                sig_text = "significativa" if (p_val is not None and p_val < 0.05) else "não significativa"
+                interpretation = f"Relação {direction} e {sig_text} (R²={round_res(r2,2)})."
 
-            # Interpretação automática em PT-BR
-            if r2 >= 0.64:      r2_interp = "forte"
-            elif r2 >= 0.36:    r2_interp = "moderado"
-            elif r2 >= 0.09:    r2_interp = "fraco"
-            else:               r2_interp = "muito fraco"
+                return {
+                    "slope": round_res(slope, 6), "intercept": round_res(intercept, 6),
+                    "r_squared": round_res(r2, 4), "p_value": round_res(p_val, 4),
+                    "ci_lower": round_res(ci_low, 6), "ci_upper": round_res(ci_high, 6),
+                    "n": int(len(x)), "interpretation": interpretation, "engine": "pingouin"
+                }
+            except Exception as pg_e:
+                print(f"Pingouin linear_regression error: {pg_e}")
 
-            direction = "positiva" if slope > 0 else "negativa"
-            sig_text  = "significativa" if p_val < 0.05 else "não significativa"
+        # Fallback Scipy
+        slope, intercept, r_val, p_val, se = stats.linregress(x, y)
+        return {
+            "slope": round_res(slope, 6), "intercept": round_res(intercept, 6),
+            "r_squared": round_res(r_val**2, 4), "p_value": round_res(p_val, 4),
+            "n": int(len(x)), "engine": "scipy"
+        }
+    except Exception as e:
+        print(f"Linear regression error: {e}")
+        return None
 
-            interpretation = (
-                f"A regressão linear indica relação {direction} e {sig_text} entre "
-                f"{x_name} e {y_name} (R²={round(r2,3)}, β={round(slope,4)}, "
-                f"p={'<0.001' if p_val<0.001 else round(p_val,4)}). "
-                f"O modelo explica {round(r2*100,1)}% da variância — efeito {r2_interp}."
-            )
-
-            return {
-                "slope": round(slope, 6),
-                "intercept": round(intercept, 6),
-                "r_squared": round(r2, 4),
-                "p_value": round(p_val, 4),
-                "ci_lower": round(ci_low, 6),
-                "ci_upper": round(ci_high, 6),
-                "n": int(len(x)),
-                "interpretation": interpretation,
-                "engine": "pingouin"
-            }
-        raise RuntimeError("Pingouin não disponível")
-
-    except Exception as pingouin_err:
-        # — Fallback: scipy.stats.linregress —
-        try:
-            slope, intercept, r_val, p_val, se = stats.linregress(x, y)
-            r2 = float(r_val ** 2)
-            # CI 95% manual: slope ± t(0.025, df=n-2) * se
-            df = len(x) - 2
-            t_crit = stats.t.ppf(0.975, df) if df > 0 else 1.96
-            ci_low  = float(slope - t_crit * se)
-            ci_high = float(slope + t_crit * se)
-
-            if r2 >= 0.64:      r2_interp = "forte"
-            elif r2 >= 0.36:    r2_interp = "moderado"
-            elif r2 >= 0.09:    r2_interp = "fraco"
-            else:               r2_interp = "muito fraco"
-
-            direction = "positiva" if slope > 0 else "negativa"
-            sig_text  = "significativa" if p_val < 0.05 else "não significativa"
-
-            interpretation = (
-                f"A regressão linear indica relação {direction} e {sig_text} entre "
-                f"{x_name} e {y_name} (R²={round(r2,3)}, β={round(float(slope),4)}, "
-                f"p={'<0.001' if p_val<0.001 else round(float(p_val),4)}). "
-                f"O modelo explica {round(r2*100,1)}% da variância — efeito {r2_interp}."
-            )
-
-            return {
-                "slope": round(float(slope), 6),
-                "intercept": round(float(intercept), 6),
-                "r_squared": round(r2, 4),
-                "p_value": round(float(p_val), 4),
-                "ci_lower": round(ci_low, 6),
-                "ci_upper": round(ci_high, 6),
-                "n": int(len(x)),
-                "interpretation": interpretation,
-                "engine": "scipy"
-            }
-        except Exception as fallback_err:
-            print(f"Linear regression fallback error: {fallback_err}")
-            return None
 
 # ============================================================
 # DATA VALIDATION
@@ -1944,7 +1973,7 @@ async def execute_protocol_v8(file: UploadFile = File(...), protocol: str = Form
                         ci = {"ci_lower": res["ci_lower"], "ci_upper": res["ci_upper"], "mean": round(float(np.mean(diff)), 4), "se": round(float(np.std(diff, ddof=1) / np.sqrt(len(diff))), 4)} if res["ci_lower"] else compute_ci_95(diff)
                         effect_size = {"cohens_d": res["cohens_d"], "interpretation": interpret_cohens_d(res["cohens_d"])}
                         if res.get("power"): effect_size["achieved_power"] = res["power"]
-                        chart_data = {"type": "histogram", "values": [float(v) for v in diff], "var_name": f"Diferença ({col_a} - {col_b})"}
+                        chart_data = {"type": "histogram", "values": [sanitize_chart_value(v) for v in diff if sanitize_chart_value(v) is not None], "var_name": f"Diferença ({col_a} - {col_b})"}
                         viz = decide_visualization("ttest_paired")
                         
                     elif "Wilcoxon" in test:
@@ -1955,7 +1984,7 @@ async def execute_protocol_v8(file: UploadFile = File(...), protocol: str = Form
                         iqr_val = f"{np.percentile(diff, 25):.2f} - {np.percentile(diff, 75):.2f}"
                         ci = compute_ci_95(diff)
                         effect_size = {"cohens_d": res.get("cohens_d", 0), "interpretation": interpret_cohens_d(res.get("cohens_d", 0))}
-                        chart_data = {"type": "histogram", "values": [float(v) for v in diff], "var_name": f"Diferença ({col_a} - {col_b})"}
+                        chart_data = {"type": "histogram", "values": [sanitize_chart_value(v) for v in diff if sanitize_chart_value(v) is not None], "var_name": f"Diferença ({col_a} - {col_b})"}
                         viz = decide_visualization("wilcoxon")
                         
                     elif "Pearson" in test:
@@ -1965,7 +1994,7 @@ async def execute_protocol_v8(file: UploadFile = File(...), protocol: str = Form
                         ci = {"ci_lower": res["ci_lower"], "ci_upper": res["ci_upper"], "mean": round(float(stat), 4), "se": None} if res["ci_lower"] else None
                         effect_size = {"r_squared": res["r_squared"], "interpretation": interpret_r_squared(res["r_squared"])}
                         if res.get("power"): effect_size["achieved_power"] = res["power"]
-                        chart_data = {"type": "scatter", "x": [float(v) for v in vals_a], "y": [float(v) for v in vals_b], "var_name": f"{col_a} vs {col_b}"}
+                        chart_data = {"type": "scatter", "x": [sanitize_chart_value(v) for v in vals_a if sanitize_chart_value(v) is not None], "y": [sanitize_chart_value(v) for v in vals_b if sanitize_chart_value(v) is not None], "var_name": f"{col_a} vs {col_b}"}
                         viz = decide_visualization("pearson")
                         
                     elif "Spearman" in test:
@@ -1975,7 +2004,7 @@ async def execute_protocol_v8(file: UploadFile = File(...), protocol: str = Form
                         ci = {"ci_lower": res["ci_lower"], "ci_upper": res["ci_upper"], "mean": round(float(stat), 4), "se": None} if res["ci_lower"] else None
                         effect_size = {"r_squared": res["r_squared"], "interpretation": interpret_r_squared(res["r_squared"])}
                         if res.get("power"): effect_size["achieved_power"] = res["power"]
-                        chart_data = {"type": "scatter", "x": [float(v) for v in vals_a], "y": [float(v) for v in vals_b], "var_name": f"{col_a} vs {col_b}"}
+                        chart_data = {"type": "scatter", "x": [sanitize_chart_value(v) for v in vals_a if sanitize_chart_value(v) is not None], "y": [sanitize_chart_value(v) for v in vals_b if sanitize_chart_value(v) is not None], "var_name": f"{col_a} vs {col_b}"}
                         viz = decide_visualization("spearman")
                         
                     elif "Regressão" in test or "Regressao" in test or "regress" in test.lower():
@@ -1991,15 +2020,15 @@ async def execute_protocol_v8(file: UploadFile = File(...), protocol: str = Form
                             }
                             chart_data = {
                                 "type": "scatter",
-                                "x": [float(v) for v in vals_a],
-                                "y": [float(v) for v in vals_b],
+                                "x": [sanitize_chart_value(v) for v in vals_a if sanitize_chart_value(v) is not None],
+                                "y": [sanitize_chart_value(v) for v in vals_b if sanitize_chart_value(v) is not None],
                                 "var_name": f"{col_a} vs {col_b}",
                                 "regression": {
-                                    "slope": lr_res["slope"],
-                                    "intercept": lr_res["intercept"],
-                                    "r_squared": lr_res["r_squared"],
-                                    "ci_lower": lr_res["ci_lower"],
-                                    "ci_upper": lr_res["ci_upper"]
+                                    "slope": sanitize_chart_value(lr_res["slope"]),
+                                    "intercept": sanitize_chart_value(lr_res["intercept"]),
+                                    "r_squared": sanitize_chart_value(lr_res["r_squared"]),
+                                    "ci_lower": sanitize_chart_value(lr_res["ci_lower"]),
+                                    "ci_upper": sanitize_chart_value(lr_res["ci_upper"])
                                 }
                             }
                             interpretation_text = lr_res.get("interpretation")
@@ -2017,7 +2046,7 @@ async def execute_protocol_v8(file: UploadFile = File(...), protocol: str = Form
                         median_val, iqr_val = None, None
                         ci = None
                         effect_size = compute_effect_size("spearman", r=stat)
-                        chart_data = {"type": "scatter", "x": [float(v) for v in vals_a], "y": [float(v) for v in vals_b], "var_name": f"{col_a} vs {col_b}"}
+                        chart_data = {"type": "scatter", "x": [sanitize_chart_value(v) for v in vals_a if sanitize_chart_value(v) is not None], "y": [sanitize_chart_value(v) for v in vals_b if sanitize_chart_value(v) is not None], "var_name": f"{col_a} vs {col_b}"}
                         viz = decide_visualization("spearman")
                     
                     # Assumptions + Power + Interpretation
@@ -2067,7 +2096,7 @@ async def execute_protocol_v8(file: UploadFile = File(...), protocol: str = Form
                         min_len = min(len(vals_a), len(vals_b))
                         if min_len >= 3:
                             res = stats.spearmanr(vals_a[:min_len], vals_b[:min_len])
-                            results.append({"testLabel": f"{var_name} (Spearman - fallback)", "statistic": round(float(res.correlation), 4), "p_value": round(float(res.pvalue), 4), "median_iqr": None, "group_stats": None, "chart_data": {"type": "scatter", "x": vals_a[:min_len].tolist(), "y": vals_b[:min_len].tolist(), "var_name": var_name}, "effect_size": compute_effect_size("spearman", r=res.correlation), "ci": None, "recovered": True, "visualization": {"primary": "scatter", "secondary": "table"}})
+                            results.append({"testLabel": f"{var_name} (Spearman - fallback)", "statistic": round(float(res.correlation), 4), "p_value": round(float(res.pvalue), 4), "median_iqr": None, "group_stats": None, "chart_data": {"type": "scatter", "x": [sanitize_chart_value(v) for v in vals_a[:min_len] if sanitize_chart_value(v) is not None], "y": [sanitize_chart_value(v) for v in vals_b[:min_len] if sanitize_chart_value(v) is not None], "var_name": var_name}, "effect_size": compute_effect_size("spearman", r=res.correlation), "ci": None, "recovered": True, "visualization": {"primary": "scatter", "secondary": "table"}})
                             continue
                     except:
                         pass
@@ -2116,15 +2145,15 @@ async def execute_protocol_v8(file: UploadFile = File(...), protocol: str = Form
                     
                     # Chart data: MEDIAS do outcome por grupo (com error bars)
                     bar_labels = [g["group"] for g in group_stats]
-                    bar_means = [g["mean"] for g in group_stats]
-                    bar_stds = [g["std"] for g in group_stats]
+                    bar_means = [sanitize_chart_value(g["mean"]) for g in group_stats]
+                    bar_stds = [sanitize_chart_value(g["std"]) for g in group_stats]
                     chart_data = {
                         "type": "bar",
                         "labels": bar_labels,
                         "values": bar_means,
                         "stds": bar_stds,
-                        "q1": [g["q1"] for g in group_stats],
-                        "q3": [g["q3"] for g in group_stats],
+                        "q1": [sanitize_chart_value(g["q1"]) for g in group_stats],
+                        "q3": [sanitize_chart_value(g["q3"]) for g in group_stats],
                         "var_name": var_name,
                         "outcome": outcome_col_pair
                     }
@@ -2464,7 +2493,7 @@ async def execute_protocol_v8(file: UploadFile = File(...), protocol: str = Form
                         stat = median_val
                         p_val = None
                         ci = compute_ci_95(numeric_vals) if len(numeric_vals) >= 2 else None
-                        chart_data = {"type": "histogram", "values": [float(v) for v in numeric_vals], "var_name": col_a}
+                        chart_data = {"type": "histogram", "values": [sanitize_chart_value(v) for v in numeric_vals if sanitize_chart_value(v) is not None], "var_name": col_a}
                         
                         unique_groups = sorted(df[col_a].dropna().unique(), key=lambda x: str(x))
                         total_valid = len(numeric_vals)
@@ -3021,31 +3050,123 @@ async def compute_roc(
         print(f"ERR: ROC -> {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
-SYSTEM_PROMPT = """Você é o SciStat AI, um assistente especializado em bioestatística e análise de dados clínicos integrado à plataforma SciStat v4.
+SYSTEM_PROMPT = """Você é o SciStat AI, um assistente amigável e especializado em bioestatística e análise de dados clínicos, integrado à plataforma SciStat.
 
-SUAS CAPACIDADES:
-- Orientar sobre qual teste estatístico usar (t-test, ANOVA, Mann-Whitney, Kruskal-Wallis, Qui-Quadrado, Spearman, Kaplan-Meier, Log-Rank, Regressão Linear, Regressão Logística)
-- Interpretar resultados de análises (valor p, intervalo de confiança, tamanho de efeito)
-- Explicar conceitos estatísticos de forma clara
-- Sugerir protocolos de análise para datasets
-- Orientar sobre desenhos de estudos clínicos (Fase I-IV)
-- Ajudar com cálculo de poder estatístico e tamanho amostral
+TOM E ESTILO DE RESPOSTA:
+- Seja **conversacional, acolhedor e didático** — como um colega sênior que adora ensinar
+- Use **negrito** para destacar conceitos importantes, nomes de testes e valores-chave
+- Use *itálico* para ênfase suave
+- Use listas com marcadores para organizar informações
+- Use blocos de código inline (`assim`) para fórmulas, valores numéricos ou termos técnicos
+- Evite respostas secas ou excessivamente formais — explique como se estivesse conversando
+- Sempre que possível, dê **exemplos práticos** do cotidiano de pesquisa clínica
+- Use emojis com moderação para tornar a leitura mais agradável (📊, 🧬, 📈, ✅, ⚠️)
+- **NUNCA** use os marcadores de markdown como asteriscos soltos — o sistema renderiza markdown corretamente, então use **negrito** e *itálico* normalmente
 
-PÁGINAS DA PLATAFORMA:
-- Dashboard (/): Upload de datasets, sumário bioestatístico, histórico de análises
-- Ensaios Clínicos (/clinical-trials): Gerenciamento de estudos, recrutamento, status por fase
-- Análise de Sobrevivência (/survival-analysis): Kaplan-Meier, Log-Rank test
-- Metanálise (/meta-analysis): Pool de efeitos de múltiplos estudos
-- Visualizações (/visualizations): Gráficos e correlações
-- Cálculo de Poder (/power-calculator): Tamanho amostral e poder estatístico
-- Arquivo Histórico (/archive): Histórico de análises realizadas
+CONHECIMENTO COMPLETO DA PLATAFORMA SCISTAT:
+
+O SciStat é uma plataforma completa de análise estatística para pesquisadores. Você conhece cada ferramenta e sabe orientar o usuário sobre a melhor opção para cada cenário:
+
+📊 **Dashboard** (/) — O ponto de partida. O usuário faz upload de um dataset (CSV ou Excel), o sistema detecta automaticamente os tipos de variáveis, sugere o protocolo de análise ideal e executa os testes. É a ferramenta principal para quem tem dados e quer respostas rápidas.
+
+🧪 **Ensaios Clínicos** (/clinical-trials) — Para gerenciar estudos clínicos do planejamento à publicação. Controle de recrutamento, fases (I-IV), status e acompanhamento de pacientes. Ideal para pesquisadores que estão conduzindo trials.
+
+📈 **Análise de Sobrevivência** (/survival-analysis) — Curvas de Kaplan-Meier e teste Log-Rank. Use quando o usuário tem dados de tempo até um evento (morte, recidiva, alta hospitalar) com censura.
+
+🔬 **Metanálise** (/meta-analysis) — Combine resultados de múltiplos estudos para obter uma estimativa pooled do efeito. Use forest plots e modelos de efeitos fixos ou aleatórios.
+
+📉 **Visualizações** (/visualizations) — Gráficos interativos, correlações visuais e exploração de dados. Perfeito para entender padrões antes de rodar testes formais.
+
+🎯 **Cálculo de Poder** (/power-calculator) — Calcule o tamanho amostral necessário antes de começar o estudo. Evite underpowered studies!
+
+📁 **Arquivo Histórico** (/archive) — Todas as análises anteriores ficam salvas aqui para consulta e replicação.
+
+TESTES ESTATÍSTICOS DISPONÍVEIS E QUANDO USAR:
+
+- **Teste T Independente** — Comparar médias de 2 grupos independentes (dados normais)
+- **Teste T Pareado** — Comparar antes/depois no mesmo grupo
+- **ANOVA One-Way** — Comparar 3+ grupos independentes (dados normais)
+- **Mann-Whitney U** — Versão não-paramétrica do Teste T (2 grupos, dados não-normais)
+- **Wilcoxon** — Versão não-paramétrica do Teste T Pareado
+- **Kruskal-Wallis** — Versão não-paramétrica da ANOVA (3+ grupos)
+- **Qui-Quadrado (χ²)** — Associação entre variáveis categóricas
+- **Teste Exato de Fisher** — Para tabelas 2×2 com amostras pequenas
+- **Correlação de Pearson** — Relação linear entre 2 variáveis contínuas normais
+- **Correlação de Spearman** — Relação monotônica (dados não-normais ou ordinais)
+- **Regressão Linear** — Predizer variável contínua a partir de preditores
+- **Regressão Logística** — Predizer outcome binário (sim/não, sucesso/fracasso)
+- **Shapiro-Wilk** — Testar normalidade dos dados
+- **Kaplan-Meier + Log-Rank** — Análise de sobrevivência com censura
+
+CORES DOS TESTES NA INTERFACE (use tags especiais quando citar testes):
+- Descritiva → `[[DESCRITIVA]]`
+- Correlação → `[[CORRELAÇÃO]]`
+- Regressão → `[[REGRESSÃO]]`
+- Comparação de Grupos → `[[COMPARAÇÃO]]`
+- Pareado (antes/depois) → `[[PAREADO]]`
+- Normalidade → `[[NORMALIDADE]]`
 
 REGRAS:
 1. Quando o usuário pedir para analisar um arquivo ou mencionar ter um dataset, DIRETAMENTE sugira que anexe o arquivo no chat (use a tag [SUGGEST_UPLOAD]).
-2. Seja conciso mas completo. Use linguagem técnica quando apropriado.
-3. Responda em português brasileiro.
-4. Quando sugerir um teste, explique brevemente POR QUÊ.
-5. Se tiver acesso ao contexto de ensaios clínicos ou histórico do usuário, personalize a resposta."""
+2. Sempre que mencionar um tipo de teste ou análise, envolva-o na tag de cor correspondente (ex: `[[COMPARAÇÃO]]Teste T Independente[[/COMPARAÇÃO]]`).
+3. Seja **conversacional e didático** — nunca seco ou robótico.
+4. Responda em português brasileiro.
+5. Quando sugerir um teste, explique brevemente POR QUÊ.
+6. Se tiver acesso ao contexto de ensaios clínicos ou histórico do usuário, personalize a resposta.
+7. Oriente o usuário sobre qual ferramenta do SciStat usar para cada necessidade."""
+
+
+@app.post("/api/stats/premium-analysis")
+async def premium_analysis(target_col: str = Form(...), group_col: Optional[str] = Form(None), file: UploadFile = File(...), user_id: str = Depends(get_current_user)):
+    """Premium analysis endpoint using the Antigravity Awesome Skills stats engine."""
+    contents = await file.read()
+    try:
+        if file.filename.endswith('.csv'): df = robust_read_csv(contents)
+        else: df = robust_read_excel(contents)
+        df = sanitize_df(df)
+        
+        analysis_results = premium_engine.run_comprehensive_analysis(df, target_col, group_col)
+        
+        # Gerar Relatório Científico com IA
+        if openai_client:
+            try:
+                # Criar um resumo conciso para o prompt
+                test_summaries = []
+                for t in analysis_results.get("tests", []):
+                    test_summaries.append(f"- {t['test_name']}: stat={t['stat_value']}, p={t['p_value']}, interpretacao={t['interpretation']}")
+                
+                desc = analysis_results.get("descriptive", {})
+                desc_summary = f"Média={desc.get('mean')}, Mediana={desc.get('median')}, DP={desc.get('std')}"
+                
+                prompt = f"""
+                Como um sênior PhD em Bioestatística Clínica, interprete estes resultados para um artigo científico de alto impacto.
+                
+                VARIAVEL ALVO: {target_col}
+                GRUPO (se houver): {group_col or 'Nenhum'}
+                ESTATISTICAS DESCRITIVAS: {desc_summary}
+                TESTES EXECUTADOS:
+                {chr(10).join(test_summaries)}
+                
+                Gere um relatório estruturado em:
+                1. 📝 RESULTADOS (Redação técnica dos achados, mencionando p-valores e magnitudes)
+                2. 🔬 DISCUSSÃO (Interpretação clínica, limitações e impacto)
+                3. 🚀 CONCLUSÃO (Ponto central e sugestão de próximos passos)
+                
+                Use Português Brasileiro. Estilo acadêmico formal. Use Markdown.
+                """
+                
+                ai_text = ask_gpt(prompt)
+                analysis_results["scientific_report"] = ai_text
+            except Exception as e:
+                print(f"ERR: AI Report -> {e}")
+                analysis_results["scientific_report"] = "Relatório científico indisponível temporariamente."
+        else:
+            analysis_results["scientific_report"] = "Configure a chave da API OpenAI para gerar relatórios automáticos."
+
+        return clean_dict_values(analysis_results)
+    except Exception as e:
+        print(f"ERR: Premium Analysis -> {e}")
+        raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/ai/chat")
 async def ai_chat(
@@ -3095,7 +3216,7 @@ Primeiras 3 linhas: {json_safe_df(df.head(3)).to_dict(orient='records')}
                 "source": "local"
             })
 
-        # Tentar Gemini com retry
+        # Tentar GPT com retry
         context_parts = [SYSTEM_PROMPT]
         if page:
             context_parts.append(f"\nPÁGINA ATUAL DO USUÁRIO: {page}")
@@ -3113,18 +3234,27 @@ Primeiras 3 linhas: {json_safe_df(df.head(3)).to_dict(orient='records')}
         full_system = "\n".join(context_parts)
 
         try:
-            if not model:
-                raise Exception("Modelo Gemini não configurado.")
+            if not openai_client:
+                raise Exception("Cliente OpenAI não configurado.")
 
-            chat = model.start_chat(history=[
-                {"role": "user" if m["role"] == "user" else "model", "parts": [m["content"]]}
-                for m in conv_history[-10:]
-            ])
+            messages = [
+                {"role": "system", "content": full_system}
+            ]
 
-            ai_text = ask_gemini(full_system + "\n\nPERGUNTA DO USUÁRIO: " + message)
-        except Exception as gemini_err:
-            err_str = str(gemini_err)
-            if "429" in err_str or "quota" in err_str.lower():
+            for m in conv_history[-10:]:
+                messages.append({"role": m["role"], "content": m["content"]})
+
+            messages.append({"role": "user", "content": message})
+
+            response = openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=messages,
+                temperature=0.7,
+            )
+            ai_text = response.choices[0].message.content
+        except Exception as openai_err:
+            err_str = str(openai_err)
+            if "429" in err_str or "quota" in err_str.lower() or "rate" in err_str.lower():
                 if local_response:
                     return clean_dict_values({
                         "response": f"{local_response}\n\n---\n_Nota: A IA está temporariamente indisponível (limite de uso exibido). Resposta baseada em conhecimento local._",
@@ -3132,11 +3262,11 @@ Primeiras 3 linhas: {json_safe_df(df.head(3)).to_dict(orient='records')}
                         "source": "local_fallback"
                     })
                 return clean_dict_values({
-                    "response": "A IA está temporariamente indisponível (limite de uso da API excedido). Aguarde alguns minutos ou adicione billing ao projeto Google Cloud para aumentar o limite.\n\nEnquanto isso, posso responder perguntas básicas de bioestatística. Tente perguntar sobre: Teste T, ANOVA, Mann-Whitney, Qui-Quadrado, Spearman, Kaplan-Meier, p-valor, tamanho amostral, intervalo de confiança.",
+                    "response": "A IA está temporariamente indisponível (limite de uso da API excedido). Aguarde alguns minutos.\n\nEnquanto isso, posso responder perguntas básicas de bioestatística. Tente perguntar sobre: Teste T, ANOVA, Mann-Whitney, Qui-Quadrado, Spearman, Kaplan-Meier, p-valor, tamanho amostral, intervalo de confiança.",
                     "needs_upload": False,
                     "source": "error"
                     })
-            raise gemini_err
+            raise openai_err
 
         needs_upload = False
         upload_keywords = ['anexe', 'anexar', 'envie o arquivo', 'envie seu', 'upload', 'compartilhe o dataset', 'preciso do arquivo', 'faça upload', 'SUGGEST_UPLOAD']
@@ -3147,7 +3277,7 @@ Primeiras 3 linhas: {json_safe_df(df.head(3)).to_dict(orient='records')}
         return clean_dict_values({
             "response": ai_text,
             "needs_upload": needs_upload,
-            "source": "gemini"
+            "source": "openai"
         })
     except Exception as e:
         print(f"ERR: AI Chat -> {e}")

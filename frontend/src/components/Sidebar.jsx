@@ -14,7 +14,7 @@ const NAV = [
   { to: '/settings',           icon: 'settings',          label: 'Ajustes' },
 ]
 
-function SidebarItem({ to, icon, label, index }) {
+function SidebarItem({ to, icon, label }) {
   const [isHovered, setIsHovered] = useState(false)
   
   return (
@@ -22,7 +22,7 @@ function SidebarItem({ to, icon, label, index }) {
       to={to}
       title={label}
       className={({ isActive }) =>
-        `flex items-center gap-4 px-4 py-3.5 rounded-2xl transition-all duration-300 group relative ${
+        `relative flex items-center gap-4 px-4 py-3.5 rounded-2xl transition-colors duration-200 ${
           isActive
             ? 'text-primary'
             : 'text-slate-500 hover:text-slate-200'
@@ -33,61 +33,71 @@ function SidebarItem({ to, icon, label, index }) {
     >
       {({ isActive }) => (
         <>
-          <motion.div 
-            className="shrink-0 w-5 h-5 flex items-center justify-center"
+          <motion.div
+            className="absolute inset-0 rounded-2xl -z-10"
+            initial={false}
             animate={{
-              scale: isActive ? 1.15 : isHovered ? 1.2 : 1,
+              opacity: isActive ? 1 : isHovered ? 1 : 0,
+              scale: isActive ? 1 : isHovered ? 1 : 0.96,
             }}
-            transition={{ type: "spring", stiffness: 400, damping: 17 }}
+            transition={{ duration: 0.2, ease: 'easeOut' }}
+            style={{
+              background: isActive
+                ? 'linear-gradient(135deg, rgba(0,255,163,0.08), rgba(0,255,163,0.02))'
+                : 'rgba(255,255,255,0.03)',
+              boxShadow: isActive
+                ? '0 0 20px rgba(0,255,163,0.08), inset 0 0 20px rgba(0,255,163,0.03)'
+                : 'none',
+            }}
+          />
+
+          <svg className="absolute inset-0 w-full h-full -z-10 pointer-events-none" viewBox="0 0 100 100" preserveAspectRatio="none">
+            <motion.rect
+              x="1" y="1" width="98" height="98" rx="14" ry="14"
+              fill="none"
+              initial={false}
+              animate={{
+                stroke: isActive ? 'rgba(0,255,163,0.25)' : isHovered ? 'rgba(255,255,255,0.08)' : 'transparent',
+                strokeWidth: isActive ? 2 : isHovered ? 1.5 : 0,
+                opacity: isActive ? 1 : isHovered ? 1 : 0,
+              }}
+              transition={{ duration: 0.2, ease: 'easeOut' }}
+            />
+          </svg>
+
+          {isActive && (
+            <motion.div
+              className="absolute inset-0 rounded-2xl -z-10"
+              animate={{ opacity: [0.3, 0.6, 0.3] }}
+              transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
+              style={{
+                background: 'linear-gradient(135deg, rgba(0,255,163,0.04), transparent, rgba(0,255,163,0.04))',
+              }}
+            />
+          )}
+
+          <motion.div
+            className="relative shrink-0 w-5 h-5 flex items-center justify-center"
+            animate={{ scale: isActive ? 1.1 : isHovered ? 1.15 : 1 }}
+            transition={{ type: 'spring', stiffness: 400, damping: 20 }}
           >
             {isActive && (
-              <div className="absolute w-8 h-8 bg-primary/20 rounded-full blur-md"
-                style={{ left: '50%', top: '50%', transform: 'translate(-50%, -50%)' }}
-              >
-                <motion.div
-                  className="w-full h-full bg-primary/20 rounded-full blur-md"
-                  animate={{ scale: [1, 1.4, 1], opacity: [0.4, 0.7, 0.4] }}
-                  transition={{ duration: 2, repeat: Infinity }}
-                />
-              </div>
+              <motion.div
+                className="absolute inset-0 rounded-full bg-primary/30 blur-[6px]"
+                animate={{ scale: [1, 1.5, 1], opacity: [0.5, 0.2, 0.5] }}
+                transition={{ duration: 2.5, repeat: Infinity, ease: 'easeInOut' }}
+              />
             )}
             <span className="material-symbols-rounded text-[20px] relative z-10">{icon}</span>
           </motion.div>
-          <motion.span 
+
+          <motion.span
             className="hidden xl:block text-[11px] font-black uppercase tracking-widest truncate"
-            animate={{ x: isActive ? 4 : 0 }}
-            transition={{ type: "spring", stiffness: 300, damping: 20 }}
+            animate={{ x: isActive ? 3 : 0 }}
+            transition={{ type: 'spring', stiffness: 300, damping: 20 }}
           >
             {label}
           </motion.span>
-          {isActive && (
-            <motion.div 
-              layoutId="sidebar-active"
-              className="absolute inset-0 bg-primary/5 border border-primary/20 rounded-2xl -z-10"
-              transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
-            />
-          )}
-          {isHovered && !isActive && (
-            <motion.div
-              layoutId="sidebar-hover"
-              className="absolute inset-0 bg-white/5 rounded-2xl -z-10"
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              transition={{ duration: 0.2 }}
-            />
-          )}
-          <motion.div
-            className="absolute left-0 w-1 h-6 bg-primary rounded-r-full"
-            initial={{ opacity: 0, scaleY: 0 }}
-            animate={{ 
-              opacity: isHovered || isActive ? 1 : 0, 
-              scaleY: isHovered || isActive ? 1 : 0,
-              y: 0
-            }}
-            transition={{ duration: 0.2 }}
-            style={{ top: '50%', transform: 'translateY(-50%)' }}
-          />
         </>
       )}
     </NavLink>

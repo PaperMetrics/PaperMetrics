@@ -25,7 +25,7 @@ O **SciStat AI** automatiza a análise estatística para pesquisadores que não 
 | Fallback Estatístico | SciPy + Statsmodels | Qualquer |
 | Banco de Dados | SQLite (dev) / Neon PostgreSQL (prod) | — |
 | Autenticação | Neon Auth (Better Auth) | — |
-| IA | Google Gemini 2.0 Flash | — |
+| IA | OpenAI GPT-4o-mini | — |
 | Frontend | React 18 + Vite | ≥ 5 |
 | Visualização | Chart.js + Framer Motion | — |
 | Exportação | SheetJS (xlsx) | ≥ 0.18 |
@@ -80,7 +80,7 @@ pingouin          # Motor estatístico principal
 statsmodels       # Poder estatístico + regressão logística
 lifelines         # Kaplan-Meier + Log-Rank
 sqlmodel          # ORM
-google-generativeai
+openai              # IA GPT-4o-mini
 python-multipart
 psycopg2-binary
 PyJWT
@@ -96,7 +96,7 @@ pingouin
 Crie (ou edite) o arquivo `backend/.env`:
 
 ```env
-GOOGLE_API_KEY=seu_api_key_gemini
+OPENAI_API_KEY=sk-proj-sua_chave_openai
 DATABASE_URL=postgresql://usuario:senha@host/banco  # Deixe em branco para SQLite local
 ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 VITE_NEON_AUTH_URL=https://seu-projeto.neonauth...  # Opcional
@@ -262,7 +262,7 @@ Análise estatística/
 | `POST` | `/api/data/execute-protocol` | Executa os testes do protocolo |
 | `POST` | `/api/data/upload` | Estatísticas descritivas |
 | `POST` | `/api/data/summary-grouped` | Resumo comparativo por grupo |
-| `POST` | `/api/ai/chat` | Chat com IA (Gemini) |
+| `POST` | `/api/ai/chat` | Chat com IA (OpenAI GPT-4o-mini) |
 | `GET/POST` | `/api/trials` | Gestão de ensaios clínicos |
 | `GET` | `/api/history` | Histórico de análises |
 
