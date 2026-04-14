@@ -18,3 +18,5 @@ requests
 beautifulsoup4
 PyPDF2
 pingouin
+Pillow
+aiofiles

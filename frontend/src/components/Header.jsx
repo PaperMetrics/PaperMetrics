@@ -7,7 +7,7 @@ import { useAuth } from '../AuthContext'
 export default function Header({ dark, setDark, setIsAssistantOpen }) {
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  const { notifications, clearNotifications, trials, history } = useSciStat()
+  const { notifications, clearNotifications, trials, history, projects, activeProjectId, setActiveProjectId } = useSciStat()
   const { user, signOut } = useAuth()
   const navigate = useNavigate()
 
@@ -76,6 +76,46 @@ export default function Header({ dark, setDark, setIsAssistantOpen }) {
 
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2 bg-white/5 p-1 rounded-2xl border border-white/5">
+            {/* Seletor de Projeto Ativo */}
+            <div className="relative group/project">
+              <button className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/10 rounded-xl border-dashed border border-transparent hover:border-white/20 text-xs text-slate-300 transition-all font-medium">
+                <span className="material-symbols-rounded text-[16px] text-primary">folder_open</span>
+                <span className="truncate max-w-[120px]">
+                   {activeProjectId ? projects?.find(p => p.id == activeProjectId)?.title || 'Projeto' : 'Vincular Projeto'}
+                </span>
+                <span className="material-symbols-rounded text-[16px]">expand_more</span>
+              </button>
+              
+              <div className="absolute right-0 top-full mt-3 w-64 bg-slate-900 border border-white/10 rounded-2xl shadow-2xl overflow-hidden z-[100] opacity-0 invisible group-hover/project:opacity-100 group-hover/project:visible transition-all">
+                <div className="p-2">
+                  <div className="text-[10px] font-black uppercase text-slate-500 mb-2 px-2 pt-2">Projeto Ativo</div>
+                  <button
+                    onClick={() => setActiveProjectId(null)}
+                    className={`w-full text-left px-3 py-2 text-xs rounded-xl transition-colors ${!activeProjectId ? 'bg-primary/20 text-primary font-bold' : 'text-slate-300 hover:bg-white/5'}`}
+                  >
+                    Nenhum (Modo Livre)
+                  </button>
+                  {projects?.map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => setActiveProjectId(p.id)}
+                      className={`w-full text-left px-3 py-2 text-xs rounded-xl transition-colors truncate ${activeProjectId == p.id ? 'bg-primary/20 text-primary font-bold' : 'text-slate-300 hover:bg-white/5'}`}
+                      title={p.title}
+                    >
+                      {p.title}
+                    </button>
+                  ))}
+                  {(!projects || projects.length === 0) && (
+                    <div className="text-center py-4 text-xs text-slate-500">
+                      Nenhum projeto criado.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+            
+            <div className="w-[1px] h-6 bg-white/10 mx-1"></div>
+
             <button
               onClick={() => setDark(!dark)}
               className="p-2 hover:bg-white/10 rounded-xl transition-all group"

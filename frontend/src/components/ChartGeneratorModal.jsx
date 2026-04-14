@@ -1,5 +1,7 @@
 import { useState, useRef, useMemo, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { useSciStat } from '../SciStatContext'
+import { useAuth } from '../AuthContext'
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -69,6 +71,8 @@ function buildHistogramBins(rawValues) {
 export default function ChartGeneratorModal({ isOpen, onClose, chartData, varName }) {
   const [selectedType, setSelectedType] = useState('bar')
   const chartRef = useRef(null)
+  const { activeProjectId } = useSciStat()
+  const { session } = useAuth()
 
   const safeLabels = chartData?.labels || []
   const safeValues = chartData?.values || []
@@ -84,6 +88,36 @@ export default function ChartGeneratorModal({ isOpen, onClose, chartData, varNam
       else setSelectedType('bar')
     }
   }, [isOpen, chartData, cType])
+
+  // Auto-save logic
+  useEffect(() => {
+    if (!isOpen || !activeProjectId || !chartRef.current) return
+    
+    // Using a timeout to ensure chart animation has finished/rendered
+    const timer = setTimeout(async () => {
+      try {
+        const dataUrl = chartRef.current.toBase64Image()
+        const blob = await (await fetch(dataUrl)).blob()
+        const file = new File([blob], 'chart.png', { type: 'image/png' })
+        const formData = new FormData()
+        formData.append('image', file)
+        formData.append('label', varName)
+        formData.append('chart_type', selectedType)
+        
+        await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/projects/${activeProjectId}/charts`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session?.sessionToken}`
+          },
+          body: formData
+        })
+      } catch (err) {
+        console.error("Auto-save chart error", err)
+      }
+    }, 1200)
+
+    return () => clearTimeout(timer)
+  }, [isOpen, selectedType, activeProjectId, varName, session])
 
   if (!chartData || !isOpen) return null
 

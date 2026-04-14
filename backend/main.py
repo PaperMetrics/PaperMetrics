@@ -5,11 +5,15 @@ import requests
 import io
 import re
 import time
+import uuid
 import datetime
+from datetime import datetime
 import numpy as np
 import pandas as pd
+from pathlib import Path
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from scipy import stats
@@ -24,6 +28,25 @@ from lifelines.statistics import logrank_test
 from bs4 import BeautifulSoup
 from stats_engine import engine as premium_engine
 from meta_pipeline import run_pipeline
+
+# ============================================================
+# Configuração de Diretórios de Upload (Fase 1 — Histórico)
+# ============================================================
+UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR.mkdir(exist_ok=True)
+(UPLOAD_DIR / "attachments").mkdir(exist_ok=True)
+(UPLOAD_DIR / "charts").mkdir(exist_ok=True)
+(UPLOAD_DIR / "thumbs").mkdir(exist_ok=True)
+
+def create_thumbnail(source_path: str, thumb_path: str, size: tuple = (400, 300)):
+    """Gera thumbnail de uma imagem usando Pillow."""
+    try:
+        from PIL import Image
+        img = Image.open(source_path)
+        img.thumbnail(size, Image.LANCZOS)
+        img.save(thumb_path, optimize=True, quality=85)
+    except Exception as e:
+        print(f"WARN: Thumbnail generation failed: {e}")
 
 try:
     import pingouin as pg
@@ -160,6 +183,47 @@ class Notification(SQLModel, table=True):
     type: str = "info" # info, success, warning
     is_read: bool = False
     created_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
+
+# ============================================================
+# Modelos de Projetos de Pesquisa (Fase 1 — Histórico)
+# ============================================================
+
+class ResearchProject(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: str = Field(index=True)
+    title: str
+    author: Optional[str] = None
+    institution: Optional[str] = None
+    doi: Optional[str] = None
+    status: str = Field(default="em_andamento")  # em_andamento | concluido | publicado
+    notes: Optional[str] = None
+    tags: Optional[str] = Field(default="[]")  # JSON array como string
+    created_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
+    updated_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
+
+class ProjectAttachment(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    project_id: int = Field(index=True)
+    filename: str          # nome gerado internamente (UUID)
+    original_name: str     # nome original do arquivo
+    file_type: str         # pdf | csv | xlsx
+    file_size: Optional[int] = None
+    file_path: str
+    created_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
+
+class ProjectChart(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    project_id: int = Field(index=True)
+    label: Optional[str] = None
+    chart_type: Optional[str] = None
+    image_path: str
+    thumb_path: Optional[str] = None
+    analysis_id: Optional[int] = None
+    created_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
+
+class ProjectAnalysisLink(SQLModel, table=True):
+    project_id: int = Field(primary_key=True)
+    history_id: int = Field(primary_key=True)
 
 def create_db_and_tables():
     SQLModel.metadata.create_all(engine)
@@ -3534,6 +3598,731 @@ Primeiras 3 linhas: {json_safe_df(df.head(3)).to_dict(orient='records')}
     except Exception as e:
         print(f"ERR: AI Chat -> {e}")
         raise HTTPException(status_code=500, detail=f"Erro no assistente: {str(e)}")
+
+# ============================================================
+# FASE 1 — Endpoints de Projetos de Pesquisa (Histórico)
+# ============================================================
+
+# Pydantic schemas para request/response
+class ProjectCreate(BaseModel):
+    title: str
+    author: Optional[str] = None
+    institution: Optional[str] = None
+    doi: Optional[str] = None
+    status: str = "em_andamento"
+    notes: Optional[str] = None
+    tags: Optional[List[str]] = []
+
+class ProjectUpdate(BaseModel):
+    title: Optional[str] = None
+    author: Optional[str] = None
+    institution: Optional[str] = None
+    doi: Optional[str] = None
+    status: Optional[str] = None
+    notes: Optional[str] = None
+    tags: Optional[List[str]] = None
+
+@app.get("/api/projects")
+async def list_projects(
+    page: int = 1,
+    limit: int = 10,
+    status: Optional[str] = None,
+    q: Optional[str] = None,
+    tag: Optional[str] = None,
+    sort: Optional[str] = None,
+    user_id: str = Depends(get_current_user)
+):
+     """Lista projetos de pesquisa do usuário com paginação."""
+    with Session(engine) as session:
+        stmt = select(ResearchProject).where(ResearchProject.user_id == user_id)
+        if status:
+            stmt = stmt.where(ResearchProject.status == status)
+            
+        stmt = stmt.order_by(ResearchProject.created_at.desc())
+        all_projects = session.exec(stmt).all()
+        
+        # Apply tag filter (in-memory since tags are JSON)
+        if tag:
+            all_projects = [p for p in all_projects if p.tags and tag.lower() in p.tags.lower()]
+            
+        # In-memory search is used as SQLite JSON search and wildcards are limited in SQLModel
+        if q:
+            q_lower = q.lower()
+            all_projects = [p for p in all_projects if getattr(p, "title") and q_lower in p.title.lower() or
+                            getattr(p, "author") and q_lower in p.author.lower() or
+                            getattr(p, "institution") and q_lower in p.institution.lower() or
+                            getattr(p, "tags") and q_lower in p.tags.lower()
+                           ]
+                            
+        # Apply sorting
+        if sort:
+            reverse = False
+            sort_key = lambda p: p.title or ""
+            
+            if sort == "created_at_desc":
+                sort_key = lambda p: p.created_at or datetime.datetime.min
+                reverse = True
+            elif sort == "created_at_asc":
+                sort_key = lambda p: p.created_at or datetime.datetime.min
+                reverse = False
+            elif sort == "title_asc":
+                sort_key = lambda p: p.title or ""
+                reverse = False
+            elif sort == "title_desc":
+                sort_key = lambda p: p.title or ""
+                reverse = True
+            elif sort == "analyses_desc":
+                # Need to get analysis count for each project
+                def get_analysis_count(project):
+                    return len(session.exec(select(ProjectAnalysisLink).where(ProjectAnalysisLink.project_id == project.id)).all())
+                sort_key = get_analysis_count
+                reverse = True
+            elif sort == "analyses_asc":
+                def get_analysis_count(project):
+                    return len(session.exec(select(ProjectAnalysisLink).where(ProjectAnalysisLink.project_id == project.id)).all())
+                sort_key = get_analysis_count
+                reverse = False
+                
+            all_projects.sort(key=sort_key, reverse=reverse)
+
+        total = len(all_projects)
+        offset = (page - 1) * limit
+        projects = all_projects[offset:offset + limit]
+
+        result = []
+        for p in projects:
+            # Contar anexos, gráficos e análises vinculadas
+            attach_count = len(session.exec(select(ProjectAttachment).where(ProjectAttachment.project_id == p.id)).all())
+            chart_count = len(session.exec(select(ProjectChart).where(ProjectChart.project_id == p.id)).all())
+            analysis_count = len(session.exec(select(ProjectAnalysisLink).where(ProjectAnalysisLink.project_id == p.id)).all())
+
+            result.append({
+                "id": p.id,
+                "title": p.title,
+                "author": p.author,
+                "institution": p.institution,
+                "doi": p.doi,
+                "status": p.status,
+                "notes": p.notes,
+                "tags": json.loads(p.tags or "[]"),
+                "created_at": p.created_at.isoformat(),
+                "updated_at": p.updated_at.isoformat(),
+                "attachment_count": attach_count,
+                "chart_count": chart_count,
+                "analysis_count": analysis_count,
+            })
+
+        return {"projects": result, "total": total, "page": page, "limit": limit}
+
+
+@app.post("/api/projects", status_code=201)
+async def create_project(
+    body: ProjectCreate,
+    user_id: str = Depends(get_current_user)
+):
+    """Cria um novo projeto de pesquisa."""
+    project = ResearchProject(
+        user_id=user_id,
+        title=body.title,
+        author=body.author,
+        institution=body.institution,
+        doi=body.doi,
+        status=body.status,
+        notes=body.notes,
+        tags=json.dumps(body.tags or [])
+    )
+    with Session(engine) as session:
+        session.add(project)
+        session.commit()
+        session.refresh(project)
+        return {"id": project.id, "title": project.title, "status": project.status, "created_at": project.created_at.isoformat()}
+
+
+@app.get("/api/projects/{project_id}")
+async def get_project(
+    project_id: int,
+    user_id: str = Depends(get_current_user)
+):
+    """Retorna detalhes completos de um projeto."""
+    with Session(engine) as session:
+        p = session.get(ResearchProject, project_id)
+        if not p or p.user_id != user_id:
+            raise HTTPException(status_code=404, detail="Projeto não encontrado.")
+
+        attachments = session.exec(select(ProjectAttachment).where(ProjectAttachment.project_id == project_id)).all()
+        charts = session.exec(select(ProjectChart).where(ProjectChart.project_id == project_id)).all()
+        analysis_links = session.exec(select(ProjectAnalysisLink).where(ProjectAnalysisLink.project_id == project_id)).all()
+
+        return {
+            "id": p.id,
+            "title": p.title,
+            "author": p.author,
+            "institution": p.institution,
+            "doi": p.doi,
+            "status": p.status,
+            "notes": p.notes,
+            "tags": json.loads(p.tags or "[]"),
+            "created_at": p.created_at.isoformat(),
+            "updated_at": p.updated_at.isoformat(),
+            "attachments": [
+                {
+                    "id": a.id, "original_name": a.original_name,
+                    "file_type": a.file_type, "file_size": a.file_size,
+                    "created_at": a.created_at.isoformat()
+                } for a in attachments
+            ],
+            "charts": [
+                {
+                    "id": c.id, "label": c.label, "chart_type": c.chart_type,
+                    "thumb_url": f"/api/projects/{project_id}/charts/{c.id}/thumb",
+                    "image_url": f"/api/projects/{project_id}/charts/{c.id}/image",
+                    "created_at": c.created_at.isoformat()
+                } for c in charts
+            ],
+            "linked_analyses": [link.history_id for link in analysis_links],
+        }
+
+
+@app.put("/api/projects/{project_id}")
+async def update_project(
+    project_id: int,
+    body: ProjectUpdate,
+    user_id: str = Depends(get_current_user)
+):
+    """Atualiza metadados de um projeto."""
+    with Session(engine) as session:
+        p = session.get(ResearchProject, project_id)
+        if not p or p.user_id != user_id:
+            raise HTTPException(status_code=404, detail="Projeto não encontrado.")
+
+        if body.title is not None: p.title = body.title
+        if body.author is not None: p.author = body.author
+        if body.institution is not None: p.institution = body.institution
+        if body.doi is not None: p.doi = body.doi
+        if body.status is not None: p.status = body.status
+        if body.notes is not None: p.notes = body.notes
+        if body.tags is not None: p.tags = json.dumps(body.tags)
+        p.updated_at = datetime.datetime.utcnow()
+
+        session.add(p)
+        session.commit()
+        return {"success": True, "updated_at": p.updated_at.isoformat()}
+
+
+@app.delete("/api/projects/{project_id}")
+async def delete_project(
+    project_id: int,
+    user_id: str = Depends(get_current_user)
+):
+    """Deleta um projeto e todos os seus arquivos associados."""
+    with Session(engine) as session:
+        p = session.get(ResearchProject, project_id)
+        if not p or p.user_id != user_id:
+            raise HTTPException(status_code=404, detail="Projeto não encontrado.")
+
+        # Remover arquivos físicos de anexos
+        attachments = session.exec(select(ProjectAttachment).where(ProjectAttachment.project_id == project_id)).all()
+        for a in attachments:
+            try:
+                Path(a.file_path).unlink(missing_ok=True)
+            except Exception as e:
+                print(f"WARN: Could not delete attachment file {a.file_path}: {e}")
+            session.delete(a)
+
+        # Remover arquivos físicos de gráficos
+        charts = session.exec(select(ProjectChart).where(ProjectChart.project_id == project_id)).all()
+        for c in charts:
+            try:
+                Path(c.image_path).unlink(missing_ok=True)
+                if c.thumb_path: Path(c.thumb_path).unlink(missing_ok=True)
+            except Exception as e:
+                print(f"WARN: Could not delete chart file {c.image_path}: {e}")
+            session.delete(c)
+
+        # Remover links de análise
+        links = session.exec(select(ProjectAnalysisLink).where(ProjectAnalysisLink.project_id == project_id)).all()
+        for link in links:
+            session.delete(link)
+
+        session.delete(p)
+        session.commit()
+        return {"success": True}
+
+
+# --- Anexos (PDF / CSV / XLSX) ---
+
+ALLOWED_ATTACHMENT_TYPES = {"application/pdf", "text/csv", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/octet-stream"}
+ALLOWED_ATTACHMENT_EXTENSIONS = {".pdf", ".csv", ".xlsx"}
+
+@app.post("/api/projects/{project_id}/attachments", status_code=201)
+async def upload_attachment(
+    project_id: int,
+    file: UploadFile = File(...),
+    user_id: str = Depends(get_current_user)
+):
+    """Faz upload de PDF ou CSV e associa ao projeto."""
+    with Session(engine) as session:
+        p = session.get(ResearchProject, project_id)
+        if not p or p.user_id != user_id:
+            raise HTTPException(status_code=404, detail="Projeto não encontrado.")
+
+    ext = Path(file.filename).suffix.lower()
+    if ext not in ALLOWED_ATTACHMENT_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Tipo de arquivo não permitido. Use: PDF, CSV ou XLSX.")
+
+    contents = await file.read()
+    if len(contents) > 50 * 1024 * 1024:  # 50MB
+        raise HTTPException(status_code=413, detail="Arquivo muito grande. Máximo: 50MB.")
+
+    unique_name = f"{uuid.uuid4().hex}{ext}"
+    save_path = UPLOAD_DIR / "attachments" / unique_name
+    save_path.write_bytes(contents)
+
+    file_type_map = {".pdf": "pdf", ".csv": "csv", ".xlsx": "xlsx"}
+    attachment = ProjectAttachment(
+        project_id=project_id,
+        filename=unique_name,
+        original_name=file.filename,
+        file_type=file_type_map.get(ext, "unknown"),
+        file_size=len(contents),
+        file_path=str(save_path)
+    )
+    with Session(engine) as session:
+        session.add(attachment)
+        session.commit()
+        session.refresh(attachment)
+        return {
+            "id": attachment.id,
+            "original_name": attachment.original_name,
+            "file_type": attachment.file_type,
+            "file_size": attachment.file_size,
+            "created_at": attachment.created_at.isoformat()
+        }
+
+
+@app.post("/api/projects/{project_id}/attachments/chunk", status_code=200)
+async def upload_attachment_chunk(
+    project_id: int,
+    upload_id: str = Form(...),
+    chunk_index: int = Form(...),
+    total_chunks: int = Form(...),
+    original_filename: str = Form(...),
+    file: UploadFile = File(...),
+    user_id: str = Depends(get_current_user)
+):
+    """Realiza o upload de anexos em chunks (1MB) sequenciais."""
+    with Session(engine) as session:
+        p = session.get(ResearchProject, project_id)
+        if not p or p.user_id != user_id:
+            raise HTTPException(status_code=404, detail="Projeto não encontrado.")
+
+    ext = Path(original_filename).suffix.lower()
+    if ext not in ALLOWED_ATTACHMENT_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Tipo de arquivo não permitido.")
+
+    temp_dir = UPLOAD_DIR / "temp"
+    temp_dir.mkdir(exist_ok=True, parents=True)
+    temp_file = temp_dir / f"{upload_id}.part"
+
+    contents = await file.read()
+    with open(temp_file, "ab") as f:
+        f.write(contents)
+
+    if chunk_index == total_chunks - 1:
+        # Último chunk
+        unique_name = f"{uuid.uuid4().hex}{ext}"
+        save_path = UPLOAD_DIR / "attachments" / unique_name
+        import shutil
+        shutil.move(str(temp_file), str(save_path))
+        
+        file_size = save_path.stat().st_size
+        file_type_map = {".pdf": "pdf", ".csv": "csv", ".xlsx": "xlsx"}
+        
+        attachment = ProjectAttachment(
+            project_id=project_id,
+            filename=unique_name,
+            original_name=original_filename,
+            file_type=file_type_map.get(ext, "unknown"),
+            file_size=file_size,
+            file_path=str(save_path)
+        )
+        with Session(engine) as session:
+            session.add(attachment)
+            session.commit()
+            session.refresh(attachment)
+            return {
+                "id": attachment.id,
+                "original_name": attachment.original_name,
+                "file_type": attachment.file_type,
+                "file_size": attachment.file_size,
+                "created_at": attachment.created_at.isoformat(),
+                "completed": True
+            }
+
+    return {"status": "chunk_received", "chunk_index": chunk_index}
+
+
+@app.get("/api/projects/{project_id}/attachments")
+async def list_attachments(
+    project_id: int,
+    user_id: str = Depends(get_current_user)
+):
+    """Lista todos os anexos de um projeto."""
+    with Session(engine) as session:
+        p = session.get(ResearchProject, project_id)
+        if not p or p.user_id != user_id:
+            raise HTTPException(status_code=404, detail="Projeto não encontrado.")
+
+        attachments = session.exec(select(ProjectAttachment).where(ProjectAttachment.project_id == project_id)).all()
+        return [
+            {
+                "id": a.id, "original_name": a.original_name,
+                "file_type": a.file_type, "file_size": a.file_size,
+                "download_url": f"/api/attachments/{a.id}/file",
+                "created_at": a.created_at.isoformat()
+            } for a in attachments
+        ]
+
+
+@app.get("/api/attachments/{attachment_id}/file")
+async def serve_attachment(
+    attachment_id: int,
+    user_id: str = Depends(get_current_user)
+):
+    """Serve o arquivo de um anexo para download/visualização."""
+    with Session(engine) as session:
+        a = session.get(ProjectAttachment, attachment_id)
+        if not a:
+            raise HTTPException(status_code=404, detail="Anexo não encontrado.")
+        # Verificar que pertence ao usuário
+        p = session.get(ResearchProject, a.project_id)
+        if not p or p.user_id != user_id:
+            raise HTTPException(status_code=403, detail="Acesso negado.")
+
+    file_path = Path(a.file_path)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Arquivo não encontrado no servidor.")
+
+    media_type_map = {"pdf": "application/pdf", "csv": "text/csv", "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}
+    return FileResponse(
+        path=str(file_path),
+        media_type=media_type_map.get(a.file_type, "application/octet-stream"),
+        filename=a.original_name
+    )
+
+
+@app.delete("/api/projects/{project_id}/attachments/{attachment_id}")
+async def delete_attachment(
+    project_id: int,
+    attachment_id: int,
+    user_id: str = Depends(get_current_user)
+):
+    """Remove um anexo do projeto."""
+    with Session(engine) as session:
+        p = session.get(ResearchProject, project_id)
+        if not p or p.user_id != user_id:
+            raise HTTPException(status_code=403, detail="Acesso negado.")
+
+        a = session.get(ProjectAttachment, attachment_id)
+        if not a or a.project_id != project_id:
+            raise HTTPException(status_code=404, detail="Anexo não encontrado.")
+
+        try:
+            Path(a.file_path).unlink(missing_ok=True)
+        except Exception as e:
+            print(f"WARN: Could not delete file {a.file_path}: {e}")
+
+        session.delete(a)
+        session.commit()
+        return {"success": True}
+
+
+# --- Gráficos (auto-save via Dashboard) ---
+
+@app.post("/api/projects/{project_id}/charts", status_code=201)
+async def save_chart(
+    project_id: int,
+    label: Optional[str] = Form(None),
+    chart_type: Optional[str] = Form(None),
+    analysis_id: Optional[int] = Form(None),
+    image: UploadFile = File(...),
+    user_id: str = Depends(get_current_user)
+):
+    """Salva um gráfico gerado no Dashboard associado ao projeto ativo."""
+    with Session(engine) as session:
+        p = session.get(ResearchProject, project_id)
+        if not p or p.user_id != user_id:
+            raise HTTPException(status_code=404, detail="Projeto não encontrado.")
+
+    contents = await image.read()
+    unique_name = f"{uuid.uuid4().hex}.png"
+    img_path = UPLOAD_DIR / "charts" / unique_name
+    thumb_path = UPLOAD_DIR / "thumbs" / unique_name
+
+    img_path.write_bytes(contents)
+    create_thumbnail(str(img_path), str(thumb_path))
+
+    chart = ProjectChart(
+        project_id=project_id,
+        label=label or f"Gráfico {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}",
+        chart_type=chart_type,
+        image_path=str(img_path),
+        thumb_path=str(thumb_path),
+        analysis_id=analysis_id
+    )
+    with Session(engine) as session:
+        session.add(chart)
+        session.commit()
+        session.refresh(chart)
+        return {
+            "id": chart.id,
+            "label": chart.label,
+            "thumb_url": f"/api/projects/{project_id}/charts/{chart.id}/thumb",
+            "image_url": f"/api/projects/{project_id}/charts/{chart.id}/image",
+            "created_at": chart.created_at.isoformat()
+        }
+
+
+@app.get("/api/projects/{project_id}/charts")
+async def list_charts(
+    project_id: int,
+    user_id: str = Depends(get_current_user)
+):
+    """Lista todos os gráficos de um projeto."""
+    with Session(engine) as session:
+        p = session.get(ResearchProject, project_id)
+        if not p or p.user_id != user_id:
+            raise HTTPException(status_code=404, detail="Projeto não encontrado.")
+
+        charts = session.exec(select(ProjectChart).where(ProjectChart.project_id == project_id).order_by(ProjectChart.created_at.desc())).all()
+        return [
+            {
+                "id": c.id, "label": c.label, "chart_type": c.chart_type,
+                "thumb_url": f"/api/projects/{project_id}/charts/{c.id}/thumb",
+                "image_url": f"/api/projects/{project_id}/charts/{c.id}/image",
+                "analysis_id": c.analysis_id,
+                "created_at": c.created_at.isoformat()
+            } for c in charts
+        ]
+
+
+@app.get("/api/projects/{project_id}/charts/{chart_id}/thumb")
+async def serve_chart_thumb(
+    project_id: int,
+    chart_id: int,
+    user_id: str = Depends(get_current_user)
+):
+    """Serve o thumbnail de um gráfico."""
+    with Session(engine) as session:
+        c = session.get(ProjectChart, chart_id)
+        if not c or c.project_id != project_id:
+            raise HTTPException(status_code=404, detail="Gráfico não encontrado.")
+        p = session.get(ResearchProject, c.project_id)
+        if not p or p.user_id != user_id:
+            raise HTTPException(status_code=403, detail="Acesso negado.")
+
+    path = Path(c.thumb_path) if c.thumb_path else Path(c.image_path)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Imagem não encontrada.")
+    return FileResponse(path=str(path), media_type="image/png")
+
+
+@app.get("/api/projects/{project_id}/charts/{chart_id}/image")
+async def serve_chart_image(
+    project_id: int,
+    chart_id: int,
+    user_id: str = Depends(get_current_user)
+):
+    """Serve a imagem completa de um gráfico."""
+    with Session(engine) as session:
+        c = session.get(ProjectChart, chart_id)
+        if not c or c.project_id != project_id:
+            raise HTTPException(status_code=404, detail="Gráfico não encontrado.")
+        p = session.get(ResearchProject, c.project_id)
+        if not p or p.user_id != user_id:
+            raise HTTPException(status_code=403, detail="Acesso negado.")
+
+    path = Path(c.image_path)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Imagem não encontrada.")
+    return FileResponse(path=str(path), media_type="image/png", filename=f"{c.label or 'grafico'}.png")
+
+
+@app.delete("/api/projects/{project_id}/charts/{chart_id}")
+async def delete_chart(
+    project_id: int,
+    chart_id: int,
+    user_id: str = Depends(get_current_user)
+):
+    """Remove um gráfico do projeto."""
+    with Session(engine) as session:
+        p = session.get(ResearchProject, project_id)
+        if not p or p.user_id != user_id:
+            raise HTTPException(status_code=403, detail="Acesso negado.")
+
+        c = session.get(ProjectChart, chart_id)
+        if not c or c.project_id != project_id:
+            raise HTTPException(status_code=404, detail="Gráfico não encontrado.")
+
+        try:
+            Path(c.image_path).unlink(missing_ok=True)
+            if c.thumb_path: Path(c.thumb_path).unlink(missing_ok=True)
+        except Exception as e:
+            print(f"WARN: Could not delete chart image: {e}")
+
+        session.delete(c)
+        session.commit()
+        return {"success": True}
+
+
+# --- Vincular/desvincular análises do histórico ---
+
+@app.post("/api/projects/{project_id}/analyses")
+async def link_analysis(
+    project_id: int,
+    history_id: int = Form(...),
+    user_id: str = Depends(get_current_user)
+):
+    """Vincula uma análise do histórico a um projeto."""
+    with Session(engine) as session:
+        p = session.get(ResearchProject, project_id)
+        if not p or p.user_id != user_id:
+            raise HTTPException(status_code=404, detail="Projeto não encontrado.")
+
+        existing = session.exec(
+            select(ProjectAnalysisLink)
+            .where(ProjectAnalysisLink.project_id == project_id)
+            .where(ProjectAnalysisLink.history_id == history_id)
+        ).first()
+        if existing:
+            return {"success": True, "message": "Análise já vinculada."}
+
+        link = ProjectAnalysisLink(project_id=project_id, history_id=history_id)
+        session.add(link)
+        session.commit()
+        return {"success": True}
+
+
+@app.delete("/api/projects/{project_id}/analyses/{history_id}")
+async def unlink_analysis(
+    project_id: int,
+    history_id: int,
+    user_id: str = Depends(get_current_user)
+):
+    """Remove o vínculo entre análise e projeto."""
+    with Session(engine) as session:
+        p = session.get(ResearchProject, project_id)
+        if not p or p.user_id != user_id:
+            raise HTTPException(status_code=403, detail="Acesso negado.")
+
+        link = session.exec(
+            select(ProjectAnalysisLink)
+            .where(ProjectAnalysisLink.project_id == project_id)
+            .where(ProjectAnalysisLink.history_id == history_id)
+        ).first()
+        if link:
+            session.delete(link)
+            session.commit()
+        return {"success": True}
+
+
+@app.get("/api/projects/{project_id}/analyses")
+async def get_project_analyses(
+    project_id: int,
+    user_id: str = Depends(get_current_user)
+):
+    """Retorna as análises vinculadas a um projeto."""
+    with Session(engine) as session:
+        # Verify project belongs to user
+        p = session.get(ResearchProject, project_id)
+        if not p or p.user_id != user_id:
+            raise HTTPException(status_code=404, detail="Projeto não encontrado.")
+
+        # Get analysis links
+        links = session.exec(
+            select(ProjectAnalysisLink)
+            .where(ProjectAnalysisLink.project_id == project_id)
+        ).all()
+        
+        # Get the actual analysis records
+        analyses = []
+        for link in links:
+            analysis = session.get(AnalysisHistory, link.history_id)
+            if analysis:
+                analyses.append({
+                    "id": analysis.id,
+                    "filename": analysis.filename,
+                    "outcome": analysis.outcome,
+                    "results": json.loads(analysis.results) if analysis.results else [],
+                    "created_at": analysis.created_at.isoformat() if analysis.created_at else None
+                })
+        
+        return analyses
+
+@app.get("/api/projects/{project_id}/export")
+async def export_project(project_id: int, user_id: str = Depends(get_current_user)):
+    """Exporta o projeto e seus artefatos num arquivo ZIP gerado dinamicamente em memória."""
+    with Session(engine) as session:
+        project = session.get(ResearchProject, project_id)
+        if not project or project.user_id != user_id:
+            raise HTTPException(status_code=403, detail="Acesso negado.")
+
+        attachments = session.exec(select(ProjectAttachment).where(ProjectAttachment.project_id == project_id)).all()
+        charts = session.exec(select(ProjectChart).where(ProjectChart.project_id == project_id)).all()
+
+        mem_zip = io.BytesIO()
+        import zipfile
+        with zipfile.ZipFile(mem_zip, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+            meta = {
+                "id": project.id,
+                "title": project.title,
+                "author": project.author,
+                "institution": project.institution,
+                "doi": project.doi,
+                "notes": project.notes,
+                "tags": json.loads(project.tags) if project.tags else [],
+                "status": project.status,
+                "created_at": project.created_at.isoformat()
+            }
+            zf.writestr("metadata.json", json.dumps(meta, indent=2, ensure_ascii=False))
+
+            for att in attachments:
+                file_path = UPLOAD_DIR / "attachments" / str(att.id)
+                if file_path.exists():
+                    zf.write(file_path, arcname=f"anexos/{att.filename}")
+
+            for chart in charts:
+                img_path = UPLOAD_DIR / "charts" / str(chart.id)
+                if img_path.exists():
+                    zf.write(img_path, arcname=f"graficos/{chart.filename}")
+
+        mem_zip.seek(0)
+        return StreamingResponse(
+            mem_zip, 
+            media_type="application/zip", 
+            headers={"Content-Disposition": f'attachment; filename="projeto_{project_id}_export.zip"'}
+        )
+
+# ============================================================
+# API de Histórico de Análises (para aba Histórico)
+# ============================================================
+
+@app.get("/api/history")
+async def get_history(user_id: str = Depends(get_current_user)):
+    """Retorna todas as análises do histórico do usuário."""
+    with Session(engine) as session:
+        stmt = select(AnalysisHistory).where(AnalysisHistory.user_id == user_id).order_by(AnalysisHistory.created_at.desc())
+        items = session.exec(stmt).all()
+        return [
+            {
+                "id": h.id,
+                "filename": h.filename,
+                "outcome": h.outcome,
+                "results": json.loads(h.results) if h.results else [],
+                "created_at": h.created_at.isoformat()
+            } for h in items
+        ]
+
 
 if __name__ == "__main__":
     import uvicorn

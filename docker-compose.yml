@@ -8,6 +8,7 @@ services:
     volumes:
       - ./backend:/app
       - /app/__pycache__ # Evitar conflitos de cache
+      - ./backend/uploads:/app/uploads
     env_file:
       - ./backend/.env
     networks:
@@ -22,9 +23,6 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules # Evitar sobrepor módulos locais com os do contêiner
-    environment:
-      - VITE_API_BASE_URL=http://localhost:8000
-      - VITE_NEON_AUTH_URL=https://ep-summer-queen-ac9q4qes.neonauth.sa-east-1.aws.neon.tech/neondb/auth
     env_file:
       - ./frontend/.env
     depends_on:
