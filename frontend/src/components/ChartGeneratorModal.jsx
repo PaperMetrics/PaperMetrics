@@ -340,6 +340,139 @@ export default function ChartGeneratorModal({ isOpen, onClose, chartData, varNam
     }
   }
 
+  const handleExportABNT = () => {
+    const S = 3
+    const W = 900 * S
+    const H = 650 * S
+    const FONT = 'Arial'
+
+    const canvas = document.createElement('canvas')
+    canvas.width = W
+    canvas.height = H
+
+    // Tamanhos de fonte em pixels reais no canvas
+    const F_TITLE = 18 * S
+    const F_TICK = 14 * S
+    const F_AXIS = 14 * S
+    const F_LEGEND = 13 * S
+    const F_SOURCE = 11 * S
+
+    // Paleta acadêmica sóbria: cinza único para histograma, multi para contingência/doughnut
+    const SINGLE_COLOR = '#4a4a4a'
+    const MULTI_COLORS = ['#4a4a4a', '#888888', '#b0b0b0', '#333333', '#666666', '#999999']
+
+    const isHistogram = cType === 'histogram'
+    const isContingency = cType === 'contingency_table'
+
+    const solidify = (datasets) => datasets.map((ds, ci) => {
+      const useSingle = isHistogram && !isContingency
+      return {
+        ...ds,
+        backgroundColor: useSingle
+          ? SINGLE_COLOR
+          : Array.isArray(ds.backgroundColor)
+            ? MULTI_COLORS.slice(0, ds.backgroundColor.length)
+            : MULTI_COLORS[ci % MULTI_COLORS.length],
+        borderColor: useSingle
+          ? '#222222'
+          : Array.isArray(ds.borderColor)
+            ? MULTI_COLORS.slice(0, ds.borderColor.length).map(() => '#222222')
+            : '#222222',
+        borderWidth: 1,
+        borderRadius: 0,
+        pointBackgroundColor: SINGLE_COLOR,
+        pointBorderColor: '#222222',
+        fill: false,
+      }
+    })
+
+    const abntScales = selectedType === 'doughnut' ? {} : {
+      x: {
+        grid: { color: '#dddddd', lineWidth: 1 },
+        ticks: { color: '#111111', font: { size: F_TICK, family: FONT }, maxRotation: 45, minRotation: 0 },
+        border: { color: '#111111', width: 2 },
+        title: selectedType === 'scatter'
+          ? { display: true, text: chartData.var_name || 'X', color: '#111111', font: { size: F_AXIS, family: FONT, weight: 'bold' } }
+          : undefined,
+      },
+      y: {
+        grid: { color: '#dddddd', lineWidth: 1 },
+        ticks: { color: '#111111', font: { size: F_TICK, family: FONT } },
+        border: { color: '#111111', width: 2 },
+        title: { display: true, text: 'Frequência', color: '#111111', font: { size: F_AXIS, family: FONT, weight: 'bold' } },
+      },
+    }
+
+    let abntData
+    if (selectedType === 'scatter' && scatterChartData) {
+      abntData = { datasets: solidify(scatterChartData.datasets) }
+    } else if (selectedType === 'doughnut') {
+      abntData = { ...doughnutData, datasets: solidify(doughnutData.datasets) }
+    } else if (selectedType === 'line') {
+      abntData = { ...lineData, datasets: solidify(lineData.datasets) }
+    } else {
+      abntData = { ...barData, datasets: solidify(barData.datasets) }
+    }
+
+    const abntOptions = {
+      responsive: false,
+      animation: false,
+      layout: { padding: { top: 20 * S, bottom: 40 * S, left: 15 * S, right: 15 * S } },
+      plugins: {
+        legend: {
+          display: isContingency,
+          labels: { color: '#111111', font: { size: F_LEGEND, family: FONT }, boxWidth: 14 * S, padding: 12 * S }
+        },
+        title: {
+          display: true,
+          text: chartTitleText,
+          color: '#111111',
+          font: { size: F_TITLE, family: FONT, weight: 'bold' },
+          padding: { top: 5 * S, bottom: 15 * S }
+        },
+        tooltip: { enabled: false },
+      },
+      scales: abntScales,
+    }
+
+    const abntBgPlugin = {
+      id: 'abnt-white-bg',
+      beforeDraw: (chart) => {
+        const ctx = chart.canvas.getContext('2d')
+        ctx.save()
+        ctx.globalCompositeOperation = 'destination-over'
+        ctx.fillStyle = '#ffffff'
+        ctx.fillRect(0, 0, chart.width, chart.height)
+        ctx.restore()
+      },
+      afterDraw: (chart) => {
+        const ctx = chart.canvas.getContext('2d')
+        ctx.save()
+        ctx.font = `${F_SOURCE}px ${FONT}`
+        ctx.fillStyle = '#555555'
+        ctx.textAlign = 'center'
+        ctx.fillText(`Fonte: Paper Metrics (${new Date().getFullYear()})`, chart.width / 2, chart.height - 10 * S)
+        ctx.restore()
+      }
+    }
+
+    const tempChart = new ChartJS(canvas, {
+      type: selectedType === 'scatter' ? 'scatter' : selectedType === 'doughnut' ? 'doughnut' : selectedType === 'line' ? 'line' : 'bar',
+      data: abntData,
+      options: abntOptions,
+      plugins: [abntBgPlugin],
+    })
+
+    requestAnimationFrame(() => {
+      const url = canvas.toDataURL('image/png', 1.0)
+      const link = document.createElement('a')
+      link.download = `grafico_abnt_${varName.replace(/\s+/g, '_').toLowerCase()}_${Date.now()}.png`
+      link.href = url
+      link.click()
+      tempChart.destroy()
+    })
+  }
+
   return (
     <AnimatePresence>
       <motion.div
@@ -407,14 +540,22 @@ export default function ChartGeneratorModal({ isOpen, onClose, chartData, varNam
           <div className="flex gap-3 p-6 pt-0">
             <button
               onClick={handleExport}
-              className="flex-1 flex items-center justify-center gap-2 bg-primary text-background py-4 rounded-2xl font-semibold text-[10px] tracking-wide hover:brightness-110 transition-all active:scale-[0.98]"
+              className="flex-1 flex items-center justify-center gap-2 bg-primary/10 border border-primary/30 text-primary py-3.5 rounded-xl font-semibold text-[11px] tracking-wide hover:bg-primary/20 transition-all active:scale-[0.98]"
             >
               <span className="material-symbols-rounded text-sm">download</span>
-              Exportar PNG
+              PNG
+            </button>
+            <button
+              onClick={handleExportABNT}
+              title="Exporta em fundo branco, alta resolução (300 DPI), conforme padrão ABNT NBR 12266"
+              className="flex-1 flex items-center justify-center gap-2 bg-stone-800 border border-stone-600/40 text-stone-200 py-3.5 rounded-xl font-semibold text-[11px] tracking-wide hover:bg-stone-700 transition-all active:scale-[0.98]"
+            >
+              <span className="material-symbols-rounded text-sm">article</span>
+              Exportar ABNT
             </button>
             <button
               onClick={onClose}
-              className="px-8 py-4 rounded-2xl border border-white/10 text-xs font-bold text-stone-400 hover:bg-white/5 hover:text-white transition-all"
+              className="px-6 py-3.5 rounded-xl border border-white/10 text-xs font-medium text-stone-500 hover:bg-white/5 hover:text-stone-300 transition-all"
             >
               Fechar
             </button>

@@ -6,7 +6,6 @@ import { useAuth } from '../AuthContext'
 const NAV = [
   { to: '/dashboard',          icon: 'dashboard',         label: 'Painel central' },
   { to: '/archive',            icon: 'folder',            label: 'Meus projetos' },
-  { to: '/clinical-trials',    icon: 'biotech',           label: 'Ensaios clínicos' },
   { to: '/survival-analysis',  icon: 'monitoring',        label: 'Sobrevivência' },
   { to: '/meta-analysis',      icon: 'stacked_bar_chart', label: 'Metanálise' },
   { to: '/visualizations',     icon: 'stacked_line_chart',label: 'Visualizações' },
