@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo, useEffect } from 'react'
+import { useState, useRef, useMemo, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useSciStat } from '../SciStatContext'
@@ -8,6 +8,7 @@ import AnalysisReviewPlan from '../components/AnalysisReviewPlan'
 import ChartGeneratorModal from '../components/ChartGeneratorModal'
 import StatTooltip from '../components/StatTooltip'
 import OutcomeSelector from '../components/OutcomeSelector'
+import ColumnDomainReview from '../components/ColumnDomainReview'
 
 const TEST_EXPLANATIONS = {
   'Teste Qui-Quadrado (χ²)': {
@@ -367,6 +368,12 @@ export default function Dashboard() {
   const [testExplanationModal, setTestExplanationModal] = useState(null)
   const fileInputRef = useRef(null)
   const premiumRef = useRef(null)
+  // Passo 0.5 — revisão de domínios especializados (entre get-columns e OutcomeSelector)
+  const [showDomainReview, setShowDomainReview] = useState(false)
+  const [domainResolutions, setDomainResolutions] = useState([])
+  const [bilateralWarnings, setBilateralWarnings] = useState([])
+  const [confirmedTransformations, setConfirmedTransformations] = useState([])
+  const [pendingColumnSamples, setPendingColumnSamples] = useState([])
 
   useEffect(() => {
     const handleEsc = (e) => {
@@ -485,6 +492,7 @@ export default function Dashboard() {
 
   // ============================================================
   // PASSO 0: Ao selecionar arquivo -> chama /get-columns primeiro
+  // Em seguida, resolve domínios especializados (Passo 0.5)
   // ============================================================
   const handleFileUpload = async (e) => {
     let file;
@@ -502,6 +510,9 @@ export default function Dashboard() {
     setShowReview(false)
     setLoading(true)
     setIsDragging(false)
+    setDomainResolutions([])
+    setBilateralWarnings([])
+    setConfirmedTransformations([])
 
     const headers = { 'Authorization': `Bearer ${session?.sessionToken}` }
     const API_URL = import.meta.env.VITE_API_BASE_URL
@@ -518,12 +529,74 @@ export default function Dashboard() {
       const colData = await colRes.json()
       setColumnOptions(colData.columns || [])
       setPendingFile(file)
+
+      // ── Passo 0.5: Resolução de domínios especializados ──────────
+      const columnSamples = (colData.columns || []).map(col => ({
+        name: col.name || col,
+        samples: (col.sample_values || col.samples || []).map(String)
+      }))
+      setPendingColumnSamples(columnSamples)
+
+      try {
+        const resolveRes = await fetch(`${API_URL}/api/data/resolve-columns`, {
+          method: 'POST',
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ columns: columnSamples })
+        })
+        if (resolveRes.ok) {
+          const resolveData = await resolveRes.json()
+          const hasSpecialDomains = (
+            (resolveData.resolutions || []).length > 0 ||
+            (resolveData.bilateral_warnings || []).length > 0
+          )
+          if (hasSpecialDomains) {
+            setDomainResolutions(resolveData.resolutions || [])
+            setBilateralWarnings(resolveData.bilateral_warnings || [])
+            setLoading(false)
+            setShowDomainReview(true)
+            return // aguardar confirmação do usuário no modal
+          }
+        }
+      } catch (resolveErr) {
+        console.warn('[DomainReview] resolve falhou, prosseguindo sem revisão:', resolveErr)
+      }
+      // ─────────────────────────────────────────────────────────────
+
+      // Sem domínios especiais → ir direto ao OutcomeSelector
       setShowOutcomeSelector(true)
     } catch (err) {
       alert(`Erro no upload: ${err.message}`);
     }
     setLoading(false)
   }
+
+  // ============================================================
+  // PASSO 0.5 → PASSO 0: Usuário confirmou domínios → OutcomeSelector
+  // ============================================================
+  const handleDomainReviewConfirm = useCallback(async (choices) => {
+    setConfirmedTransformations(choices)
+    setShowDomainReview(false)
+    setShowOutcomeSelector(true)
+  }, [])
+
+  const handleDomainReviewSkip = useCallback(() => {
+    setShowDomainReview(false)
+    setShowOutcomeSelector(true)
+  }, [])
+
+  const handleTeachDomain = useCallback(async (payload) => {
+    const headers = { 'Authorization': `Bearer ${session?.sessionToken}`, 'Content-Type': 'application/json' }
+    const API_URL = import.meta.env.VITE_API_BASE_URL
+    try {
+      await fetch(`${API_URL}/api/domains/teach`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload)
+      })
+    } catch (e) {
+      console.warn('[TeachDomain] falhou:', e)
+    }
+  }, [session])
 
   // ============================================================
   // PASSO 0 -> ANÁLISE: chamado após o usuário confirmar o outcome
@@ -856,6 +929,16 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-12 pb-20">
+      {/* Passo 0.5 — Revisão de Domínios Especializados */}
+      <ColumnDomainReview
+        isOpen={showDomainReview}
+        resolutions={domainResolutions}
+        bilateralWarnings={bilateralWarnings}
+        onConfirm={handleDomainReviewConfirm}
+        onSkip={handleDomainReviewSkip}
+        onTeachDomain={handleTeachDomain}
+      />
+
       {/* Passo 0 — Seleção de Desfecho */}
       {showOutcomeSelector && (
         <OutcomeSelector

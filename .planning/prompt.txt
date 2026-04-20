@@ -1,0 +1,57 @@
+Você é um Engenheiro de Dados Clínicos Sênior e Estatístico Médico. Nossa missão é expandir o coração de um sistema SaaS em Python voltado para análise automatizada de dados médicos e estatísticos.
+
+O que estamos construindo:
+O arquivo alvo é `backend/domain_dictionaries.json`. Ele atua como o "cérebro médico", contendo chaves para identificar dinamicamente dezenas de variáveis de saúde vindas de planilhas de pesquisadores despadronizadas, limpá-las através de Regex e mapear pontos de corte matemáticos válidos (ex: limiares de categorização clínica da OMS, KDIGO, ADA) para testes estatísticos automatizados (Qui-quadrado, T-test, Mann-Whitney).
+
+O Contexto Atual:
+Já possuímos cerca de 80 variáveis consolidadas cobrindo exames de rotina, hemograma completo, perfil lipídico, função renal, gasometria arterial (UTI), endocrinologia, hepatologia, rastreio oncológico, infectologia avançada e parâmetros antropométricos básicos. 
+
+A Tarefa:
+Sua tarefa é CONTINUAR A INJETAR variáveis neste dicionário, SEMPRE EM LOTES DE 20 variáveis por vez. 
+Sugestão para os próximos passos: Psiquiatria/Neurologia (Lítio, Ácido Valproico, Liquor), Vitaminas e Elementos (Vit D, B12, Zinco, Magnésio), Perfil Hormonal Feminino (FSH, LH, Prolactina, Estradiol), e Marcadores Reumatológicos secundários.
+
+Regras Estritas para a Inserção:
+1. Respeite A RIGOR a formatação e os nós JSON. A indentação é por 2 espaços.
+2. Cada variável DEVE ter o seguinte Schema estrutural preenchido completamente em Português-BR (exceto hints e chaves em que faz sentido manter termos originais para regex):
+   - "display_name": Nome bonitinho pro usuário
+   - "description": Breve subtítulo
+   - "detection": Objeto contendo "pattern" (Regex de captura do valor), "value_range" [min, max] limites vitais lógicos, "sample_match_threshold" (geralmente 0.8), e "column_name_hints" (lista de palavras que o sistema usará no cabeçalho das colunas do Excel para achar a variável).
+   - "gold_standard": O tipo estatístico puro (ex: "numérico contínuo assimétrico", "categórico ordinal")
+   - "rationale": Por que esta variável importa na clínica médica?
+   - "reference": Sociedade de especialidade dona da diretriz (ex: WHO, ADA)
+   - "bilateral_rule": {"enabled": false} (padrão)
+   - "transformations": Contendo sempre o nó "none" e PELO MENOS UM nó de transformação clínica "category_cutoffs" transformando números puros em categorias diagnósticas, indicando `thresholds` exatos, `labels`, `right_inclusive` (boolean) e "suitable_for" (testes estatísticos permitidos).
+   - "default_transformation": "none"
+
+Ferramental e Execução:
+Você deve utilizar ferramentas de edição em larga escala (ex: `multi_replace_file_content` ou edição via sed/JSON diff) para adicionar as 20 variáveis *imediatamente antes* do encerramento oficial do nó contendo os dicionários, que é delimitado fisicamente no final do arquivo pelo bloco final de metadados `_meta`. Seja preciso com a inserção da vírgula precedendo a primeira das suas 20 novas chaves.
+
+Exemplo do Molde Esperado para as Configurações (Siga-o de forma paranoica):
+"nome_da_variavel": {
+  "display_name": "...",
+  "description": "...",
+  "detection": {
+    "pattern": "^\\d{1,3}(\\.\\d)?$",
+    "value_range": [0, 100],
+    "sample_match_threshold": 0.8,
+    "column_name_hints": ["...", "..."]
+  },
+  "gold_standard": "...",
+  "rationale": "...",
+  "reference": "...",
+  "bilateral_rule": { "enabled": false },
+  "transformations": {
+    "none": { "label": "Numérico", "suitable_for": ["t-test", "Mann-Whitney U"] },
+    "classificacao_clinica": {
+      "type": "category_cutoffs",
+      "label": "Estado: Baixo (< X) / Normal (X a Y) / Alto (> Y)",
+      "thresholds": [ X.0, Y.0 ],
+      "labels": ["Baixo", "Normal", "Alto"],
+      "right_inclusive": true,
+      "suitable_for": ["qui-quadrado"]
+    }
+  },
+  "default_transformation": "none"
+}
+
+Pode assumir o comando. Adicione o próximo lote de 20.

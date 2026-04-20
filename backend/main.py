@@ -685,12 +685,13 @@ async def get_columns_endpoint(file: UploadFile = File(...)):
             unique_count = len(df[col].dropna().unique())
             is_numeric_col = not col_series.isna().all() and unique_count >= 5
             dtype_label = "Numérico" if is_numeric_col else ("Binário" if unique_count == 2 else "Categórico")
-            sample_vals = df[col].dropna().head(3).astype(str).tolist()
+            sample_vals = df[col].dropna().head(6).astype(str).tolist()
             columns.append({
                 "name": col,
                 "type": dtype_label,
                 "unique_count": unique_count,
-                "sample": sample_vals,
+                "sample": sample_vals[:3],
+                "sample_values": sample_vals,  # alias para resolve-columns endpoint
                 "suggested": col == suggested_col
             })
 
@@ -4328,6 +4329,189 @@ async def get_history(user_id: str = Depends(get_current_user)):
                 "created_at": h.created_at.isoformat()
             } for h in items
         ]
+
+
+# ============================================================
+# Sistema de Domínios Inteligentes — Endpoints de Resolução
+# ============================================================
+
+# Carregar módulos de domínio de forma lazy para não quebrar startup se faltarem
+try:
+    from domain_resolver import load_dictionaries, resolve_all_columns, detect_bilateral_pairs
+    from domain_resolver import apply_transformation as apply_domain_transformation
+    DOMAIN_RESOLVER_AVAILABLE = True
+except ImportError as _domain_import_err:
+    DOMAIN_RESOLVER_AVAILABLE = False
+    print(f"WARN: domain_resolver não disponível: {_domain_import_err}")
+
+try:
+    from ai_domain_inferrer import infer_domain
+    AI_INFERRER_AVAILABLE = True
+except ImportError as _ai_import_err:
+    AI_INFERRER_AVAILABLE = False
+    print(f"WARN: ai_domain_inferrer não disponível: {_ai_import_err}")
+
+
+class ColumnSample(BaseModel):
+    name: str
+    samples: List[str]
+
+
+class ResolveColumnsRequest(BaseModel):
+    columns: List[ColumnSample]
+
+
+class TeachDomainRequest(BaseModel):
+    column_name: str
+    sample_values: List[str]
+    domain_description: str
+    transformation: str
+    user_note: Optional[str] = None
+
+
+@app.post("/api/data/resolve-columns")
+async def resolve_columns_endpoint(
+    request: ResolveColumnsRequest,
+    user_id: str = Depends(get_current_user)
+):
+    """
+    Analisa as colunas de um CSV e detecta domínios especializados.
+    Chamado APÓS /api/data/get-columns e ANTES de /api/data/analyze-protocol.
+
+    Retorna resoluções apenas para colunas que precisam de atenção.
+    """
+    if not DOMAIN_RESOLVER_AVAILABLE:
+        return {"resolutions": [], "bilateral_warnings": [], "error": "Domain resolver não disponível."}
+
+    try:
+        dictionaries = load_dictionaries()
+        resolutions = []
+
+        for col_info in request.columns:
+            col_name = col_info.name
+            samples = [str(s) for s in col_info.samples if s is not None]
+
+            from domain_resolver import resolve_column, _get_sample_values
+            result = resolve_column(col_name, samples, dictionaries)
+
+            # Se não reconheceu via dicionário e IA disponível → tentar IA
+            if result["domain"] is None and AI_INFERRER_AVAILABLE and openai_client:
+                try:
+                    ai_result = infer_domain(col_name, samples[:10])
+                    if ai_result.get("needs_transformation") and ai_result.get("confidence") in ("medium", "high"):
+                        result["source"] = ai_result.get("source", "ai_generic")
+                        result["confidence"] = ai_result.get("confidence", "low")
+                        result["rationale"] = ai_result.get("domain_description", "")
+                        result["reference"] = ai_result.get("reference")
+                        result["warning"] = ai_result.get("warning")
+                        result["ai_suggested_transformation"] = ai_result.get("suggested_transformation")
+                        result["ai_reasoning"] = ai_result.get("reasoning")
+                        # Incluir mesmo sem domínio fixo, para o usuário decidir
+                except Exception as e_ai:
+                    print(f"WARN: IA falhou para coluna '{col_name}': {e_ai}")
+
+            # Incluir apenas colunas que precisam de ação do usuário
+            needs_attention = (
+                result.get("domain") is not None
+                or (result.get("source") in ("ai_generic", "ai_library") and result.get("confidence") != "low")
+            )
+
+            if needs_attention:
+                result["sample_values"] = samples[:5]
+                resolutions.append(result)
+
+        # Detectar pares bilaterais (OD/OE, etc.) a partir de todas as colunas
+        bilateral_warnings = []
+        try:
+            import pandas as pd
+            # Construir DataFrame mínimo somente com as colunas recebidas para detecção bilateral
+            df_minimal = pd.DataFrame({
+                col.name: pd.Series(col.samples, dtype=str)
+                for col in request.columns
+            })
+            bilateral_warnings = detect_bilateral_pairs(df_minimal, dictionaries)
+        except Exception as e_bil:
+            print(f"WARN: bilateral detection falhou: {e_bil}")
+
+        return {
+            "resolutions": resolutions,
+            "bilateral_warnings": bilateral_warnings,
+            "total_columns_analyzed": len(request.columns),
+            "columns_needing_attention": len(resolutions)
+        }
+
+    except Exception as e:
+        print(f"ERR: resolve_columns_endpoint -> {e}")
+        raise HTTPException(status_code=500, detail=f"Erro ao resolver colunas: {str(e)}")
+
+
+@app.post("/api/domains/teach")
+async def teach_domain_endpoint(
+    request: TeachDomainRequest,
+    user_id: str = Depends(get_current_user)
+):
+    """
+    Persiste um novo domínio ensinado pelo usuário em user_domains.json.
+    Na próxima análise, este domínio será reconhecido automaticamente.
+    """
+    import re as _re
+    from pathlib import Path as _Path
+
+    user_domains_path = _Path(__file__).parent / "user_domains.json"
+
+    try:
+        if user_domains_path.exists():
+            with open(user_domains_path, "r", encoding="utf-8") as f:
+                user_data = json.load(f)
+        else:
+            user_data = {"version": "1.0", "domains": {}}
+
+        # Gerar chave única baseada na descrição do domínio
+        domain_key = "user_" + _re.sub(r"[^a-z0-9_]", "_", request.domain_description.lower())[:40]
+
+        # Detectar pattern automático dos sample_values
+        sample_set = set(str(s).strip() for s in request.sample_values if s)
+        auto_pattern = None
+        if sample_set:
+            # Pattern simples: conjunto de valores literais
+            escaped = [_re.escape(v) for v in list(sample_set)[:10]]
+            auto_pattern = "^(" + "|".join(escaped) + ")$"
+
+        new_domain = {
+            "display_name": request.domain_description,
+            "description": request.domain_description,
+            "source": "user_taught",
+            "taught_by": user_id,
+            "column_name_example": request.column_name,
+            "user_note": request.user_note,
+            "detection": {
+                "pattern": auto_pattern,
+                "sample_match_threshold": 0.7,
+                "column_name_hints": [request.column_name.lower()]
+            },
+            "transformations": {
+                request.transformation: {
+                    "label": f"{request.transformation} (definido pelo usuário)",
+                    "user_note": request.user_note
+                }
+            },
+            "default_transformation": request.transformation
+        }
+
+        user_data["domains"][domain_key] = new_domain
+
+        with open(user_domains_path, "w", encoding="utf-8") as f:
+            json.dump(user_data, f, ensure_ascii=False, indent=2)
+
+        return {
+            "success": True,
+            "domain_key": domain_key,
+            "message": f"Domínio '{request.domain_description}' salvo com sucesso. Será reconhecido em próximas análises."
+        }
+
+    except Exception as e:
+        print(f"ERR: teach_domain_endpoint -> {e}")
+        raise HTTPException(status_code=500, detail=f"Erro ao salvar domínio: {str(e)}")
 
 
 if __name__ == "__main__":

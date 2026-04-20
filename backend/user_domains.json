@@ -1,0 +1,5 @@
+{
+  "version": "1.0",
+  "_note": "Domínios aprendidos pelos usuários. O dicionário oficial (domain_dictionaries.json) tem prioridade em caso de conflito.",
+  "domains": {}
+}
