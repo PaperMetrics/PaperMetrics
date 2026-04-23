@@ -17,6 +17,8 @@ export default function Layout({ children, dark, setDark }) {
       </div>
 
       <Header dark={dark} setDark={setDark} setIsAssistantOpen={setIsAssistantOpen} />
+      {/* Espaçador para compensar o header fixed */}
+      <div className="h-[52px]" />
 
       <div className="flex">
         <Sidebar />

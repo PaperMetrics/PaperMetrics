@@ -552,8 +552,9 @@ export default function Dashboard() {
         })
         if (resolveRes.ok) {
           const resolveData = await resolveRes.json()
+          const detectedDomains = (resolveData.resolutions || []).filter(r => r.needs_attention || r.domain)
           const hasSpecialDomains = (
-            (resolveData.resolutions || []).length > 0 ||
+            detectedDomains.length > 0 ||
             (resolveData.bilateral_warnings || []).length > 0 ||
             (colData.derived_candidates || []).length > 0
           )
@@ -571,6 +572,10 @@ export default function Dashboard() {
       // ─────────────────────────────────────────────────────────────
 
       // Sem domínios especiais → ir direto ao OutcomeSelector
+      // Ainda assim, garantir que variáveis derivadas (ex: Acuidade visual LogMAR) apareçam
+      if (colData.derived_candidates?.length) {
+        setColumnOptions(prev => addDerivedCandidatesToColumns(prev, colData.derived_candidates))
+      }
       setShowOutcomeSelector(true)
     } catch (err) {
       alert(`Erro no upload: ${err.message}`);
@@ -582,90 +587,85 @@ export default function Dashboard() {
   // PASSO 0.5 → PASSO 0: Usuário confirmou domínios → OutcomeSelector
   // ============================================================
   
+  // ── Helper: injeta derived_candidates na lista de colunas ──────────────
+  const addDerivedCandidatesToColumns = useCallback((cols, candidates) => {
+    if (!candidates || candidates.length === 0) return cols
+    const existingNames = new Set(cols.map(c => c.name))
+    const toAdd = candidates.filter(cand => !existingNames.has(cand.derived_name))
+    if (toAdd.length === 0) return cols
+    // Limpar 'suggested' das colunas atuais para dar destaque à derivada preferida
+    const cleaned = cols.map(c => ({ ...c, suggested: false }))
+    for (const cand of toAdd) {
+      const isPreferred = cand.derived_name.toLowerCase().includes('acuidade visual') &&
+                         cand.derived_name.toLowerCase().includes('logmar')
+      cleaned.push({
+        name: cand.derived_name,
+        type: 'Numérico',
+        unique_count: 0,
+        sample: [cand.description || 'Variável derivada'],
+        suggested: isPreferred,
+        isDerived: true,
+        derivedType: cand.type,
+      })
+    }
+    return cleaned
+  }, [])
+
   // Atualiza columnOptions com base nas transformações confirmadas
   const applyDomainTransformations = useCallback((originalColumns, transformations) => {
-    if (!transformations || transformations.length === 0) return originalColumns
-    
     const transformedCols = originalColumns.map(col => ({ ...col }))
-    const tfMap = {}
-    for (const tf of transformations) {
-      tfMap[tf.column] = tf
-    }
-    
-    for (const col of transformedCols) {
-      const tf = tfMap[col.name]
-      if (tf && tf.transformation && tf.transformation !== "none") {
-        const domainInfo = tf.domain || tfMap[col.name]?.domain
-        let newName = col.name
-        let newType = col.type
-        let isSuggested = col.suggested
-        
-        const tfUpper = tf.transformation.toUpperCase()
-        
-        if (domainInfo === "visual_acuity_snellen") {
-          if (tf.transformation === "logmar") {
-            newName = `${col.name} (LogMAR)`
+
+    // Aplicar transformações de domínio se houver
+    if (transformations && transformations.length > 0) {
+      const tfMap = {}
+      for (const tf of transformations) {
+        tfMap[tf.column] = tf
+      }
+
+      for (const col of transformedCols) {
+        const tf = tfMap[col.name]
+        if (tf && tf.transformation && tf.transformation !== "none") {
+          const domainInfo = tf.domain || tfMap[col.name]?.domain
+          let newName = col.name
+          let newType = col.type
+          let isSuggested = col.suggested
+
+          const tfUpper = tf.transformation.toUpperCase()
+
+          if (domainInfo === "visual_acuity_snellen") {
+            if (tf.transformation === "logmar") {
+              newName = `${col.name} (LogMAR)`
+              newType = "Numérico"
+              isSuggested = true
+            } else if (tf.transformation === "decimal") {
+              newName = `${col.name} (Decimal)`
+              newType = "Numérico"
+              isSuggested = true
+            }
+          } else if (domainInfo === "intraocular_pressure" || domainInfo === "iop") {
+            if (tf.transformation === "mmhg") {
+              newName = `${col.name} (mmHg)`
+              newType = "Numérico"
+            }
+          } else {
+            newName = `${col.name} (${tfUpper})`
             newType = "Numérico"
-            isSuggested = true
-          } else if (tf.transformation === "decimal") {
-            newName = `${col.name} (Decimal)`
-            newType = "Numérico"
-            isSuggested = true
           }
-        } else if (domainInfo === "intraocular_pressure") {
-          if (tf.transformation === "mmhg") {
-            newName = `${col.name} (mmHg)`
-            newType = "Numérico"
+
+          col.name = newName
+          col.type = newType
+          col.suggested = isSuggested
+
+          if (col.sample && col.sample.length > 0) {
+            col.sample = [`${tfUpper} calculado`, ...col.sample.slice(0, 2)]
           }
-        } else if (domainInfo === "iop") {
-          if (tf.transformation === "mmhg") {
-            newName = `${col.name} (mmHg)`
-            newType = "Numérico"
-          }
-        } else {
-          newName = `${col.name} (${tfUpper})`
-          newType = "Numérico"
-        }
-        
-        col.name = newName
-        col.type = newType
-        col.suggested = isSuggested
-        
-        if (col.sample && col.sample.length > 0) {
-          col.sample = [`${tfUpper} calculado`, ...col.sample.slice(0, 2)]
         }
       }
     }
-    
-    // ── Adicionar colunas derivadas vindas do backend (derived_candidates) ──
-    // O backend já detectou quais transformações são aplicáveis.
-    // Adicionamos ao lista de colunas para que apareçam no OutcomeSelector.
-    const derivedNames = new Set(transformedCols.map(c => c.name))
-    const candidatesToAdd = (derivedCandidates || []).filter(
-      cand => !derivedNames.has(cand.derived_name)
-    )
 
-    if (candidatesToAdd.length > 0) {
-      // Limpar previous "suggested" para dar destaque à derivada
-      const cleanedCols = transformedCols.map(c => ({ ...c, suggested: false }))
-      for (const cand of candidatesToAdd) {
-        const isPreferred = cand.derived_name.toLowerCase().includes('acuidade visual') &&
-                           cand.derived_name.toLowerCase().includes('logmar')
-        cleanedCols.push({
-          name: cand.derived_name,
-          type: 'Numérico',
-          unique_count: 0,
-          sample: [cand.description || 'Variável derivada'],
-          suggested: isPreferred,
-          isDerived: true,
-          derivedType: cand.type,
-        })
-      }
-      return cleanedCols
-    }
-
-    return transformedCols
-  }, [derivedCandidates])
+    // SEMPRE adicionar colunas derivadas — independente de haver transformações
+    return addDerivedCandidatesToColumns(transformedCols, derivedCandidates)
+  }, [derivedCandidates, addDerivedCandidatesToColumns])
 
   const handleDomainReviewConfirm = useCallback(async (choices, passedDerivedCandidates) => {
     console.log('[DEBUG] handleDomainReviewConfirm choices:', choices)
@@ -686,9 +686,13 @@ export default function Dashboard() {
   }, [columnOptions, applyDomainTransformations])
 
   const handleDomainReviewSkip = useCallback(() => {
+    // Mesmo pulando a revisão, garantir que variáveis derivadas apareçam no OutcomeSelector
+    if (derivedCandidates && derivedCandidates.length > 0) {
+      setColumnOptions(prev => addDerivedCandidatesToColumns(prev, derivedCandidates))
+    }
     setShowDomainReview(false)
     setShowOutcomeSelector(true)
-  }, [])
+  }, [derivedCandidates, addDerivedCandidatesToColumns])
 
   const handleTeachDomain = useCallback(async (payload) => {
     const headers = { 'Authorization': `Bearer ${session?.sessionToken}`, 'Content-Type': 'application/json' }
@@ -834,6 +838,10 @@ export default function Dashboard() {
       if (analysisProtocol?.outcome) {
         formData.set('outcome', analysisProtocol.outcome)
         formData.set('group_by', analysisProtocol.outcome)
+      }
+      // Garantir que transformações clínicas (Snellen→LogMAR, etc.) sejam aplicadas em todos os endpoints
+      if (confirmedTransformations && confirmedTransformations.length > 0) {
+        formData.set('domain_transformations', JSON.stringify(confirmedTransformations))
       }
 
       const descRes = await fetch(`${API_URL}/api/data/upload`, { method: 'POST', body: formData, headers })

@@ -497,15 +497,22 @@ def sanitize_df(df: pd.DataFrame) -> pd.DataFrame:
         if df[col].dtype == 'object':
             # Limpeza básica de espaços e aspas residuais
             df[col] = df[col].astype(str).str.strip().replace('nan', np.nan).replace('', np.nan).replace('None', np.nan)
-            
+
             # 0. Normalizar sinônimos categóricos ANTES de qualquer conversão numérica
             df[col] = normalize_categorical_synonyms(df[col])
-            
-            # 1. Detectar formato brasileiro (1.200,50 ou 120,5)
+
+            # 0.5 Detectar colunas com frações (ex: Snellen "20/20", "6/6") — NÃO converter
             sample = df[col].dropna().head(50).astype(str)
+            fraction_count = sum(1 for s in sample if re.search(r'^\s*\d+\s*/\s*\d+\s*$', s))
+            if len(sample) > 0 and fraction_count / len(sample) >= 0.3:
+                # Coluna contém frações (provável Snellen) — preservar como string
+                print(f"DEBUG sanitize: coluna '{col}' contém frações ({fraction_count}/{len(sample)}) — preservada como string")
+                continue
+
+            # 1. Detectar formato brasileiro (1.200,50 ou 120,5)
             if any(re.search(r'\d+,\d+', s) for s in sample):
                 df[col] = df[col].str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
-            
+
             # 2. Tentar conversão numérica direta (Float)
             try_num = pd.to_numeric(df[col], errors='coerce')
             if try_num.notna().sum() > len(df) * 0.3:
@@ -639,8 +646,101 @@ def on_startup():
 # Endpoints de Dados e Análise (Precision & Telemetry)
 # ============================================================
 
+def _apply_clinical_transforms(df: pd.DataFrame, outcome_col: str = None, domain_transformations: str = None) -> pd.DataFrame:
+    """
+    Aplica transformações de domínio e variáveis derivadas clínicas ao dataframe.
+    Reutilizado por upload, execute-protocol e summary-grouped para garantir
+    que colunas derivadas (Snellen→LogMAR, best_eye, IMC, etc.) estejam disponíveis.
+    """
+    transformations_map = {}
+
+    # Se outcome_col contém transformação no nome (ex: "OD (LogMAR)"), marcar para aplicar
+    if outcome_col and "(" in outcome_col and ")" in outcome_col:
+        match = re.match(r"^(.+?)\s*\((.+?)\)$", outcome_col)
+        if match:
+            base_col = match.group(1).strip()
+            tf_type = match.group(2).strip().lower()
+            if base_col in df.columns and tf_type in ("logmar", "decimal", "mmhg"):
+                transformations_map[base_col] = {
+                    "column": base_col,
+                    "transformation": tf_type,
+                    "domain": "visual_acuity_snellen" if tf_type in ("logmar", "decimal") else "iop"
+                }
+
+    if domain_transformations:
+        try:
+            transformations = json.loads(domain_transformations) if isinstance(domain_transformations, str) else domain_transformations
+            if transformations and isinstance(transformations, list):
+                for tf in transformations:
+                    col = tf.get("column")
+                    if col:
+                        transformations_map[col] = tf
+        except Exception as e_tf:
+            print(f"WARN: _apply_clinical_transforms: {e_tf}")
+
+    # Aplicar transformações explícitas
+    for base_col, tf in transformations_map.items():
+        original_col = tf.get("column") or base_col
+        transformation = tf.get("transformation", "").lower()
+        domain = tf.get("domain", "")
+        if not original_col or not transformation or transformation == "none":
+            continue
+        if original_col not in df.columns:
+            continue
+        if domain == "visual_acuity_snellen" and transformation == "logmar":
+            new_col = f"{original_col} (LogMAR)"
+            if new_col not in df.columns:
+                df[new_col] = pd.to_numeric(df[original_col].apply(snellen_to_logmar), errors='coerce')
+        elif domain == "visual_acuity_snellen" and transformation == "decimal":
+            new_col = f"{original_col} (Decimal)"
+            if new_col not in df.columns:
+                df[new_col] = pd.to_numeric(df[original_col].apply(snellen_to_decimal), errors='coerce')
+        elif domain in ("intraocular_pressure", "iop") and transformation == "mmhg":
+            new_col = f"{original_col} (mmHg)"
+            if new_col not in df.columns:
+                df[new_col] = pd.to_numeric(
+                    df[original_col].astype(str).str.replace(',', '.').str.extract(r'([\d.]+)')[0],
+                    errors='coerce'
+                )
+
+    # Motor de variáveis derivadas automáticas (Snellen→LogMAR, best_eye, IMC, etc.)
+    try:
+        derived_candidates = detect_derived_candidates(df)
+        if derived_candidates:
+            auto_names = [c["derived_name"] for c in derived_candidates if c.get("auto_apply")]
+            if outcome_col:
+                for cand in derived_candidates:
+                    if cand["derived_name"].lower() == outcome_col.lower():
+                        auto_names.append(cand["derived_name"])
+                    if outcome_col.lower() in [s.lower() for s in cand.get("source_columns", [])]:
+                        auto_names.append(cand["derived_name"])
+            df = apply_all_transforms(df, derived_candidates, accepted=list(set(auto_names)))
+    except Exception as e_ct:
+        print(f"WARN _apply_clinical_transforms: {e_ct}")
+
+    # Fallback: se outcome_col não existe ainda, tentar criar
+    if outcome_col and outcome_col not in df.columns:
+        m_paren = re.match(r'^(.+?)\s*\((.+?)\)$', outcome_col)
+        if m_paren:
+            base_col = m_paren.group(1).strip()
+            tf_type = m_paren.group(2).strip().lower()
+            if base_col in df.columns:
+                if tf_type == "logmar":
+                    df[outcome_col] = pd.to_numeric(df[base_col].apply(snellen_to_logmar), errors='coerce')
+                elif tf_type == "decimal":
+                    df[outcome_col] = pd.to_numeric(df[base_col].apply(snellen_to_decimal), errors='coerce')
+        if outcome_col not in df.columns and 'acuidade visual' in outcome_col.lower():
+            alias_candidates = [c for c in df.columns if 'acuidade' in c.lower()
+                                or ('visual' in c.lower() and 'logmar' in c.lower())]
+            if alias_candidates:
+                alias = sorted(alias_candidates, key=lambda c: 'logmar' in c.lower(), reverse=True)[0]
+                df[outcome_col] = df[alias]
+
+    return df
+
+
 @app.post("/api/data/upload")
-async def upload_file_v6(file: UploadFile = File(...), user_id: str = Depends(get_current_user)):
+async def upload_file_v6(file: UploadFile = File(...), outcome: Optional[str] = Form(None), domain_transformations: Optional[str] = Form(None), user_id: str = Depends(get_current_user)):
     contents = await file.read()
     record_telemetry(file.filename, contents)
     try:
@@ -652,11 +752,28 @@ async def upload_file_v6(file: UploadFile = File(...), user_id: str = Depends(ge
             msg = "Esta parece uma Planilha de Resumo/Frequências. Para realizar análises estatísticas, o Paper Metrics precisa da Planilha de Microdados (onde cada linha é um paciente e cada coluna é uma variável)."
             raise HTTPException(status_code=400, detail=msg)
 
+        # Aplicar transformações clínicas (Snellen→LogMAR, best_eye, etc.)
+        df = _apply_clinical_transforms(df, outcome_col=outcome, domain_transformations=domain_transformations)
+
         summary = json_safe_df(df.describe()).to_dict()
         preview = json_safe_df(df.head(10)).to_dict(orient='records')
         
+        # Identificar colunas brutas com versão derivada (ex: "OD" quando "OD (LogMAR)" existe)
+        _upload_derived_sources = set()
+        try:
+            _upload_cands = detect_derived_candidates(df)
+            for cand in _upload_cands:
+                for src in cand.get("source_columns", []):
+                    base = src.split(" (")[0].strip()
+                    if base in df.columns and cand["derived_name"] in df.columns:
+                        _upload_derived_sources.add(base)
+        except Exception:
+            pass
+
         descriptive = {}
         for col in df.columns:
+            if col in _upload_derived_sources:
+                continue
             col_data = pd.to_numeric(df[col], errors='coerce')
             non_null = col_data.dropna()
             n_missing = int(df[col].isna().sum())
@@ -1597,7 +1714,9 @@ async def analyze_protocol_v7(
 
         outcome_series = pd.to_numeric(df[outcome_suggested].astype(str).str.replace(',', '.'), errors='coerce')
         is_outcome_clinical = any(d in outcome_suggested.lower() for d in ['(logmar)', '(decimal)', '(mmhg)'])
-        is_outcome_numeric = not outcome_series.isna().all() and (len(outcome_series.dropna().unique()) >= 5 or is_outcome_clinical)
+        # Variáveis clínicas derivadas (LogMAR, mmHg) são SEMPRE numéricas — mesmo se parsing falhou
+        is_outcome_numeric = is_outcome_clinical or (not outcome_series.isna().all() and (len(outcome_series.dropna().unique()) >= 5))
+        print(f"DEBUG outcome_type: '{outcome_suggested}' clinical={is_outcome_clinical} numeric={is_outcome_numeric} non_null={outcome_series.dropna().count()} unique={len(outcome_series.dropna().unique())}")
 
         variables = []
         
@@ -1613,7 +1732,7 @@ async def analyze_protocol_v7(
             "rationale": f"Análise descritiva da variável desfecho principal '{outcome_suggested}'.",
             "relevance": 100,
             "is_selected": True,
-            "pair": {"predictor": outcome_suggested, "outcome": outcome_suggested}
+            "pair": {"col_a": outcome_suggested}
         })
         var_id = 0
         total_rows = len(df)
@@ -1784,9 +1903,23 @@ async def analyze_protocol_v7(
                 })
 
         # 5d. Variáveis individuais descritivas (excluindo o desfecho)
+        # Identificar colunas brutas que já têm versão derivada (ex: "OD" → "OD (LogMAR)")
+        _derived_sources = set()
+        try:
+            for cand in derived_candidates:
+                for src in cand.get("source_columns", []):
+                    # Extrair o nome base sem sufixo (ex: "OD (LogMAR)" → "OD")
+                    base = src.split(" (")[0].strip()
+                    if base in df.columns and cand["derived_name"] in df.columns:
+                        _derived_sources.add(base)
+        except Exception:
+            pass
+
         for col in df.columns:
             if not is_meaningful_variable(col): continue
             if col == outcome_suggested: continue
+            # Pular colunas brutas que já possuem versão derivada (ex: "OD" quando "OD (LogMAR)" existe)
+            if col in _derived_sources: continue
             vi = var_info.get(col, {})
             rel = calculate_relevance(col, vi)
             if vi.get('is_numeric'):
@@ -2798,7 +2931,7 @@ def decide_visualization(test_type, group_stats=None, n_groups=None):
     return {"primary": "table", "secondary": None}
 
 @app.post("/api/data/execute-protocol")
-async def execute_protocol_v8(file: UploadFile = File(...), protocol: str = Form(...), outcome: Optional[str] = Form(None), user_id: str = Depends(get_current_user)):
+async def execute_protocol_v8(file: UploadFile = File(...), protocol: str = Form(...), outcome: Optional[str] = Form(None), domain_transformations: Optional[str] = Form(None), user_id: str = Depends(get_current_user)):
     contents = await file.read()
     record_telemetry("EXECUTE_" + file.filename, contents, protocol, outcome)
     try:
@@ -2806,7 +2939,10 @@ async def execute_protocol_v8(file: UploadFile = File(...), protocol: str = Form
         if file.filename.endswith('.csv'): df = robust_read_csv(contents)
         else: df = robust_read_excel(io.BytesIO(contents))
         df = sanitize_df(df)
-        
+
+        # Aplicar transformações clínicas (Snellen→LogMAR, best_eye, etc.)
+        df = _apply_clinical_transforms(df, outcome_col=outcome, domain_transformations=domain_transformations)
+
         # Validação de dados
         validation_report, df = validate_and_clean_data(df)
         
@@ -3490,12 +3626,14 @@ async def execute_protocol_v8(file: UploadFile = File(...), protocol: str = Form
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/data/summary-grouped")
-async def summary_grouped_v6(file: UploadFile = File(...), group_by: Optional[str] = Form(None)):
+async def summary_grouped_v6(file: UploadFile = File(...), group_by: Optional[str] = Form(None), outcome: Optional[str] = Form(None), domain_transformations: Optional[str] = Form(None)):
     contents = await file.read()
     try:
         if file.filename.endswith('.csv'): df = robust_read_csv(contents)
         else: df = pd.read_excel(io.BytesIO(contents))
         df = sanitize_df(df)
+        # Aplicar transformações clínicas (Snellen→LogMAR, best_eye, etc.)
+        df = _apply_clinical_transforms(df, outcome_col=outcome or group_by, domain_transformations=domain_transformations)
         if not group_by or group_by not in df.columns:
             cats = [c for c in df.columns if not pd.api.types.is_numeric_dtype(df[c]) and len(df[c].unique()) < 10]
             group_by = cats[0] if cats else None
@@ -5098,15 +5236,14 @@ async def resolve_columns_endpoint(
                 except Exception as e_ai:
                     print(f"WARN: IA falhou para coluna '{col_name}': {e_ai}")
 
-            # Incluir apenas colunas que precisam de ação do usuário
+            # Incluir TODAS as colunas para que o usuário possa categorizar cada uma
             needs_attention = (
                 result.get("domain") is not None
                 or (result.get("source") in ("ai_generic", "ai_library") and result.get("confidence") != "low")
             )
-
-            if needs_attention:
-                result["sample_values"] = samples[:5]
-                resolutions.append(result)
+            result["needs_attention"] = needs_attention
+            result["sample_values"] = samples[:5]
+            resolutions.append(result)
 
         # Detectar pares bilaterais (OD/OE, etc.) a partir de todas as colunas
         bilateral_warnings = []
@@ -5125,7 +5262,7 @@ async def resolve_columns_endpoint(
             "resolutions": resolutions,
             "bilateral_warnings": bilateral_warnings,
             "total_columns_analyzed": len(request.columns),
-            "columns_needing_attention": len(resolutions)
+            "columns_needing_attention": sum(1 for r in resolutions if r.get("needs_attention"))
         }
 
     except Exception as e:

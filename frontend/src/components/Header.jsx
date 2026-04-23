@@ -40,7 +40,7 @@ export default function Header({ dark, setDark, setIsAssistantOpen }) {
   }
 
   return (
-    <header className="sticky top-0 z-50 w-full bg-background/80 backdrop-blur-xl border-b border-border-subtle">
+    <header className="fixed top-0 left-0 right-0 z-50 w-full bg-background/80 backdrop-blur-xl border-b border-border-subtle">
       <div className="flex justify-between items-center px-6 lg:px-10 py-3 w-full mx-auto max-w-[1600px]">
         <div className="flex items-center gap-12">
           <Link to="/" className="flex items-center gap-2 group text-primary">

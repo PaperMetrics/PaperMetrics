@@ -11,6 +11,7 @@
  */
 
 import React, { useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   X, ChevronRight, CheckCircle2, AlertTriangle, Info,
@@ -23,13 +24,26 @@ import AiDomainSuggestion from "./AiDomainSuggestion";
 import DomainCatalog from "./DomainCatalog";
 import SuggestDomainModal from "./SuggestDomainModal";
 
+// ─── Design tokens (alinhados com a marca Paper Metrics) ────────────────────
+
+const T = {
+  bg:       "var(--surface, #111110)",
+  bgDeep:   "var(--background, #0a0a09)",
+  border:   "var(--border-subtle, #292524)",
+  primary:  "var(--color-primary, #5eead4)",
+  accent:   "var(--color-accent, #134e4a)",
+  text:     "var(--text-main, #e7e5e4)",
+  muted:    "var(--text-muted, #a8a29e)",
+  dim:      "#78716c",
+};
+
 // ─── Utilitários ──────────────────────────────────────────────────────────────
 
 const CONFIDENCE_CONFIG = {
-  high:    { color: "#10b981", label: "Alta confiança",   bg: "rgba(16,185,129,0.1)"   },
-  medium:  { color: "#f59e0b", label: "Confiança média",  bg: "rgba(245,158,11,0.1)"   },
-  low:     { color: "#ef4444", label: "Baixa confiança",  bg: "rgba(239,68,68,0.1)"    },
-  unknown: { color: "#64748b", label: "Desconhecido",     bg: "rgba(100,116,139,0.1)"  },
+  high:    { color: "#5eead4", label: "Alta confiança",   bg: "rgba(94,234,212,0.08)" },
+  medium:  { color: "#fbbf24", label: "Confiança média",  bg: "rgba(251,191,36,0.08)" },
+  low:     { color: "#f87171", label: "Baixa confiança",  bg: "rgba(248,113,113,0.08)" },
+  unknown: { color: "#78716c", label: "Desconhecido",     bg: "rgba(120,113,108,0.08)" },
 };
 
 const SOURCE_LABELS = {
@@ -70,8 +84,8 @@ function ModeSelector({ activeMode, onSelect }) {
   return (
     <div style={{
       display: "flex", gap: 4, marginTop: 14, marginBottom: 2,
-      padding: "4px", background: "#080f1c", borderRadius: 10,
-      border: "1px solid rgba(255,255,255,0.05)",
+      padding: "4px", background: T.bgDeep, borderRadius: 10,
+      border: `1px solid ${T.border}`,
     }}>
       {MODES.map(({ key, label, Icon, title }) => {
         const isActive = activeMode === key;
@@ -86,9 +100,9 @@ function ModeSelector({ activeMode, onSelect }) {
               flex: 1, display: "flex", alignItems: "center",
               justifyContent: "center", gap: 5,
               padding: "7px 10px", borderRadius: 7,
-              background: isActive ? "rgba(99,102,241,0.15)" : "transparent",
-              border: isActive ? "1px solid rgba(99,102,241,0.35)" : "1px solid transparent",
-              color: isActive ? "#a5b4fc" : "#4b5563",
+              background: isActive ? "rgba(94,234,212,0.1)" : "transparent",
+              border: isActive ? "1px solid rgba(94,234,212,0.25)" : "1px solid transparent",
+              color: isActive ? T.primary : T.dim,
               fontSize: 12, fontWeight: isActive ? 600 : 400,
               cursor: "pointer", transition: "all 0.18s",
             }}
@@ -113,16 +127,16 @@ function AppliedDomainPill({ domain, onClear }) {
       style={{
         display: "inline-flex", alignItems: "center", gap: 7,
         padding: "5px 10px 5px 12px", borderRadius: 20, marginTop: 8,
-        background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.3)",
-        fontSize: 12, color: "#6ee7b7", fontWeight: 500,
+        background: "rgba(94,234,212,0.08)", border: "1px solid rgba(94,234,212,0.25)",
+        fontSize: 12, color: T.primary, fontWeight: 500,
       }}
     >
-      <CheckCircle2 size={13} style={{ color: "#10b981" }} />
+      <CheckCircle2 size={13} style={{ color: T.primary }} />
       {domain.display_name}
       <button
         onClick={onClear}
         style={{
-          background: "none", border: "none", color: "#10b981",
+          background: "none", border: "none", color: T.primary,
           cursor: "pointer", padding: "0 2px", lineHeight: 1,
           opacity: 0.7, transition: "opacity 0.15s",
         }}
@@ -139,21 +153,13 @@ function AppliedDomainPill({ domain, onClear }) {
 
 function ColumnResolutionCard({ resolution, index, onChange }) {
   const [expanded, setExpanded] = useState(false);
-  // mode começa como null — sem modo selecionado, card está neutro
   const [mode, setMode] = useState(null);
   const [appliedDomain, setAppliedDomain] = useState(null);
   const [suggestTarget, setSuggestTarget] = useState(null);
-  const [showConfidenceMenu, setShowConfidenceMenu] = useState(false);
 
-  // Se o usuário já applied um domínio, usa ele. Senão, neutro.
-  const isConfirmed = !!appliedDomain;
-
-  // Opções de transformação: só do domínio aplicado (IA ou catálogo)
+  const conf = CONFIDENCE_CONFIG[resolution.confidence] || CONFIDENCE_CONFIG.unknown;
   const options = appliedDomain?.transformations || [];
-
   const selectedTransformation = resolution.userChoice ?? "none";
-
-  // Callbacks ─────────────────────────────────────────────────────────────────
 
   const handleTransformationChange = useCallback((val) => {
     onChange(resolution.column, { userChoice: val });
@@ -168,7 +174,6 @@ function ColumnResolutionCard({ resolution, index, onChange }) {
     });
   }, [resolution.column, onChange]);
 
-  // Confirmar a sugestão automática do backend
   const handleConfirmAuto = useCallback(() => {
     const autoData = {
       domain: resolution.domain,
@@ -207,8 +212,8 @@ function ColumnResolutionCard({ resolution, index, onChange }) {
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.06 }}
       style={{
-        background: "#111827",
-        border: `1px solid ${appliedDomain ? "rgba(16,185,129,0.2)" : "#1f2937"}`,
+        background: T.bg,
+        border: `1px solid ${appliedDomain ? "rgba(94,234,212,0.2)" : T.border}`,
         borderRadius: 12,
         overflow: "hidden",
         marginBottom: 12,
@@ -225,12 +230,11 @@ function ColumnResolutionCard({ resolution, index, onChange }) {
         aria-expanded={expanded}
         aria-label={`Expandir detalhes da coluna ${resolution.column}`}
       >
-        {/* Ícone de domínio */}
         <div style={{
           width: 36, height: 36, borderRadius: 8,
-          background: appliedDomain ? "rgba(16,185,129,0.1)" : conf.bg,
+          background: appliedDomain ? "rgba(94,234,212,0.08)" : conf.bg,
           display: "flex", alignItems: "center", justifyContent: "center",
-          color: appliedDomain ? "#10b981" : conf.color, flexShrink: 0,
+          color: appliedDomain ? T.primary : conf.color, flexShrink: 0,
           transition: "all 0.3s",
         }}>
           {appliedDomain
@@ -239,27 +243,23 @@ function ColumnResolutionCard({ resolution, index, onChange }) {
           }
         </div>
 
-        {/* Nome da coluna + estado */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <span style={{ fontFamily: "monospace", fontWeight: 600, fontSize: 14, color: "#f1f5f9" }}>
+            <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, fontSize: 14, color: T.text }}>
               {resolution.column}
             </span>
-
-            {/* Badge de tipo de dado (sempre visível) */}
             {resolution.sample_values?.length > 0 && (
               <span style={{
                 fontSize: 10, padding: "2px 7px",
-                borderRadius: 20, background: "rgba(100,116,139,0.08)",
-                color: "#4b5563", border: "1px solid #1f2937",
-                fontFamily: "monospace",
+                borderRadius: 20, background: "rgba(255,255,255,0.03)",
+                color: T.dim, border: `1px solid ${T.border}`,
+                fontFamily: "'IBM Plex Mono', monospace",
               }}>
                 {resolution.sample_values.slice(0, 2).join(", ")}{resolution.sample_values.length > 2 ? "…" : ""}
               </span>
             )}
           </div>
 
-          {/* Status: confirmado ou aguardando */}
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
             {appliedDomain ? (
               <AppliedDomainPill domain={appliedDomain} onClear={handleClearApplied} />
@@ -267,18 +267,17 @@ function ColumnResolutionCard({ resolution, index, onChange }) {
               <div style={{
                 display: "inline-flex", alignItems: "center", gap: 6,
                 padding: "4px 10px", borderRadius: 6,
-                background: "rgba(71,85,105,0.12)", border: "1px solid rgba(71,85,105,0.2)",
-                color: "#475569", fontSize: 12,
+                background: "rgba(255,255,255,0.03)", border: `1px solid ${T.border}`,
+                color: T.dim, fontSize: 12,
               }}>
                 <Info size={12} />
-                Categoria não definida — expanda para classificar
+                Categoria nao definida — expanda para classificar
               </div>
             )}
           </div>
         </div>
 
-        {/* Toggle expand */}
-        <div style={{ color: "#475569", flexShrink: 0 }}>
+        <div style={{ color: T.dim, flexShrink: 0 }}>
           {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
         </div>
       </div>
@@ -292,36 +291,35 @@ function ColumnResolutionCard({ resolution, index, onChange }) {
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.25 }}
-            style={{ overflow: "hidden", borderTop: "1px solid #1a2234" }}
+            style={{ overflow: "hidden", borderTop: `1px solid ${T.border}` }}
           >
             <div style={{ padding: "16px 16px 20px" }}>
 
-              {/* Se já selecionado: mostrar domínio aplicado + opções de transformação */}
+              {/* Domínio aplicado + opções de transformação */}
               {appliedDomain && (
                 <div style={{ marginBottom: 14 }}>
                   <div style={{
                     display: "flex", alignItems: "center", gap: 8,
                     padding: "10px 12px", borderRadius: 8, marginBottom: 12,
-                    background: "rgba(16,185,129,0.07)", border: "1px solid rgba(16,185,129,0.2)",
+                    background: "rgba(94,234,212,0.05)", border: "1px solid rgba(94,234,212,0.15)",
                   }}>
-                    <CheckCircle2 size={15} style={{ color: "#10b981", flexShrink: 0 }} />
+                    <CheckCircle2 size={15} style={{ color: T.primary, flexShrink: 0 }} />
                     <div>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: "#6ee7b7" }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: T.primary }}>
                         {appliedDomain.display_name}
                       </div>
                       {appliedDomain.rationale && (
-                        <div style={{ fontSize: 11, color: "#475569", marginTop: 2, lineHeight: 1.4 }}>
+                        <div style={{ fontSize: 11, color: T.dim, marginTop: 2, lineHeight: 1.4 }}>
                           {appliedDomain.rationale}
                         </div>
                       )}
                     </div>
                   </div>
 
-                  {/* Seleção de transformação */}
                   {options.length > 0 && (
                     <div>
                       <div style={{
-                        fontSize: 11, color: "#475569", fontWeight: 600,
+                        fontSize: 11, color: T.dim, fontWeight: 600,
                         marginBottom: 7, textTransform: "uppercase", letterSpacing: "0.06em",
                       }}>
                         Transformação
@@ -335,8 +333,8 @@ function ColumnResolutionCard({ resolution, index, onChange }) {
                               style={{
                                 display: "flex", alignItems: "flex-start", gap: 10,
                                 padding: "9px 12px", borderRadius: 8, cursor: "pointer",
-                                background: isSelected ? "rgba(99,102,241,0.12)" : "#0f172a",
-                                border: `1px solid ${isSelected ? "rgba(99,102,241,0.4)" : "#1f2937"}`,
+                                background: isSelected ? "rgba(94,234,212,0.08)" : T.bgDeep,
+                                border: `1px solid ${isSelected ? "rgba(94,234,212,0.3)" : T.border}`,
                                 transition: "all 0.15s",
                               }}
                             >
@@ -346,14 +344,14 @@ function ColumnResolutionCard({ resolution, index, onChange }) {
                                 value={opt.key}
                                 checked={isSelected}
                                 onChange={() => handleTransformationChange(opt.key)}
-                                style={{ marginTop: 2, accentColor: "#6366f1" }}
+                                style={{ marginTop: 2, accentColor: "#5eead4" }}
                               />
                               <div style={{ flex: 1 }}>
-                                <div style={{ fontSize: 13, fontWeight: 500, color: isSelected ? "#a5b4fc" : "#cbd5e1" }}>
+                                <div style={{ fontSize: 13, fontWeight: 500, color: isSelected ? T.primary : T.text }}>
                                   {opt.label}
                                 </div>
                                 {opt.warning && (
-                                  <div style={{ fontSize: 11, color: "#f59e0b", marginTop: 3 }}>⚠ {opt.warning}</div>
+                                  <div style={{ fontSize: 11, color: "#fbbf24", marginTop: 3 }}>⚠ {opt.warning}</div>
                                 )}
                               </div>
                             </label>
@@ -365,11 +363,11 @@ function ColumnResolutionCard({ resolution, index, onChange }) {
                 </div>
               )}
 
-              {/* Amostras — sempre visíveis dentro do corpo */}
+              {/* Amostras */}
               {resolution.sample_values?.length > 0 && !appliedDomain && (
                 <div style={{ marginBottom: 12 }}>
                   <div style={{
-                    fontSize: 10, color: "#374151", fontWeight: 700,
+                    fontSize: 10, color: T.dim, fontWeight: 700,
                     marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em",
                   }}>
                     Valores de amostra
@@ -377,21 +375,21 @@ function ColumnResolutionCard({ resolution, index, onChange }) {
                   <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
                     {resolution.sample_values.map((v, i) => (
                       <span key={i} style={{
-                        fontFamily: "monospace", fontSize: 12,
+                        fontFamily: "'IBM Plex Mono', monospace", fontSize: 12,
                         padding: "3px 8px", borderRadius: 5,
-                        background: "#0f172a", color: "#64748b", border: "1px solid #1f2937",
+                        background: T.bgDeep, color: T.muted, border: `1px solid ${T.border}`,
                       }}>{v}</span>
                     ))}
                   </div>
                 </div>
               )}
 
-              {/* ── Seletor de modo (só aparece se ainda não aplicou) ── */}
+              {/* Seletor de modo */}
               {!appliedDomain && (
                 <ModeSelector activeMode={mode} onSelect={handleModeSelect} />
               )}
 
-              {/* Painel: Ver Sugestão (automática do backend) */}
+              {/* Painéis de modo */}
               <AnimatePresence mode="wait">
                 {mode === "auto" && !appliedDomain && (
                   <motion.div
@@ -405,24 +403,24 @@ function ColumnResolutionCard({ resolution, index, onChange }) {
                     {resolution.domain ? (
                       <div style={{
                         marginTop: 12,
-                        background: "rgba(99,102,241,0.07)",
-                        border: "1px solid rgba(99,102,241,0.2)",
+                        background: "rgba(94,234,212,0.05)",
+                        border: "1px solid rgba(94,234,212,0.15)",
                         borderRadius: 10, padding: "14px 16px",
                       }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                          <DomainIcon domain={resolution.domain} size={16} style={{ color: "#818cf8" }} />
+                          <DomainIcon domain={resolution.domain} size={16} />
                           <div style={{ flex: 1 }}>
-                            <div style={{ fontSize: 13, fontWeight: 600, color: "#a5b4fc" }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: T.primary }}>
                               {resolution.display_name || resolution.domain?.replace(/_/g, " ")}
                             </div>
-                            <div style={{ fontSize: 11, color: "#475569", marginTop: 2 }}>
+                            <div style={{ fontSize: 11, color: T.dim, marginTop: 2 }}>
                               Detectado automaticamente · {CONFIDENCE_CONFIG[resolution.confidence]?.label || "Confiança desconhecida"}
                             </div>
                           </div>
                         </div>
                         {resolution.rationale && (
                           <div style={{
-                            fontSize: 11, color: "#64748b", lineHeight: 1.5,
+                            fontSize: 11, color: T.muted, lineHeight: 1.5,
                             marginBottom: 12, paddingLeft: 4,
                           }}>
                             {resolution.rationale}
@@ -436,9 +434,9 @@ function ColumnResolutionCard({ resolution, index, onChange }) {
                             style={{
                               flex: 1, display: "flex", alignItems: "center", gap: 6,
                               justifyContent: "center", padding: "8px 14px",
-                              borderRadius: 8, background: "linear-gradient(135deg, #4338ca, #6366f1)",
-                              border: "none", color: "#fff", fontSize: 12, fontWeight: 600,
-                              cursor: "pointer", boxShadow: "0 3px 10px rgba(99,102,241,0.3)",
+                              borderRadius: 8, background: T.primary,
+                              border: "none", color: T.accent, fontSize: 12, fontWeight: 600,
+                              cursor: "pointer", boxShadow: "0 3px 10px rgba(94,234,212,0.15)",
                             }}
                           >
                             <CheckCircle2 size={13} />
@@ -448,8 +446,8 @@ function ColumnResolutionCard({ resolution, index, onChange }) {
                             onClick={() => setMode(null)}
                             style={{
                               padding: "8px 14px", borderRadius: 8,
-                              background: "transparent", border: "1px solid #1f2937",
-                              color: "#475569", fontSize: 12, cursor: "pointer",
+                              background: "transparent", border: `1px solid ${T.border}`,
+                              color: T.dim, fontSize: 12, cursor: "pointer",
                             }}
                           >
                             Ignorar
@@ -459,19 +457,18 @@ function ColumnResolutionCard({ resolution, index, onChange }) {
                     ) : (
                       <div style={{
                         marginTop: 12, padding: "12px 14px",
-                        background: "rgba(71,85,105,0.08)", borderRadius: 9,
-                        border: "1px solid rgba(71,85,105,0.15)",
-                        fontSize: 12, color: "#475569", textAlign: "center",
+                        background: "rgba(255,255,255,0.02)", borderRadius: 9,
+                        border: `1px solid ${T.border}`,
+                        fontSize: 12, color: T.dim, textAlign: "center",
                       }}>
-                        Nenhuma sugestão automática disponível para esta coluna.
+                        Nenhuma sugestao automatica disponivel para esta coluna.
                         <br />
-                        <span style={{ fontSize: 11, color: "#374151" }}>Use Sugerir com IA ou o Catálogo.</span>
+                        <span style={{ fontSize: 11, color: T.dim, opacity: 0.7 }}>Use Sugerir com IA ou o Catalogo.</span>
                       </div>
                     )}
                   </motion.div>
                 )}
 
-                {/* Painel IA */}
                 {mode === "ai" && !appliedDomain && (
                   <motion.div
                     key="ai-panel"
@@ -489,7 +486,6 @@ function ColumnResolutionCard({ resolution, index, onChange }) {
                   </motion.div>
                 )}
 
-                {/* Catálogo */}
                 {mode === "catalog" && !appliedDomain && (
                   <motion.div
                     key="catalog-panel"
@@ -512,7 +508,6 @@ function ColumnResolutionCard({ resolution, index, onChange }) {
         )}
       </AnimatePresence>
 
-      {/* Modal de sugestão ao desenvolvedor (teleportado aqui para manter encapsulamento) */}
       {suggestTarget && (
         <SuggestDomainModal
           resolution={resolution}
@@ -535,8 +530,8 @@ function BilateralWarningCard({ warning, index }) {
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.05 }}
       style={{
-        background: "rgba(16,185,129,0.06)",
-        border: "1px solid rgba(16,185,129,0.2)",
+        background: "rgba(94,234,212,0.04)",
+        border: "1px solid rgba(94,234,212,0.15)",
         borderRadius: 10, marginBottom: 10, overflow: "hidden",
       }}
     >
@@ -547,21 +542,21 @@ function BilateralWarningCard({ warning, index }) {
           padding: "12px 14px", cursor: "pointer", userSelect: "none",
         }}
       >
-        <Eye size={16} style={{ color: "#10b981", flexShrink: 0 }} />
+        <Eye size={16} style={{ color: T.primary, flexShrink: 0 }} />
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 13, fontWeight: 500, color: "#6ee7b7" }}>
+          <div style={{ fontSize: 13, fontWeight: 500, color: T.primary }}>
             Par bilateral detectado:{" "}
-            <span style={{ fontFamily: "monospace" }}>{warning.right_column}</span>
+            <span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{warning.right_column}</span>
             {" + "}
-            <span style={{ fontFamily: "monospace" }}>{warning.left_column}</span>
+            <span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{warning.left_column}</span>
           </div>
-          <div style={{ fontSize: 11, color: "#475569", marginTop: 2 }}>
-            {warning.display_name} — regra clínica disponível
+          <div style={{ fontSize: 11, color: T.dim, marginTop: 2 }}>
+            {warning.display_name} — regra clinica disponivel
           </div>
         </div>
         {expanded
-          ? <ChevronUp size={14} style={{ color: "#475569" }} />
-          : <ChevronDown size={14} style={{ color: "#475569" }} />
+          ? <ChevronUp size={14} style={{ color: T.dim }} />
+          : <ChevronDown size={14} style={{ color: T.dim }} />
         }
       </div>
       <AnimatePresence initial={false}>
@@ -570,28 +565,28 @@ function BilateralWarningCard({ warning, index }) {
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            style={{ overflow: "hidden", borderTop: "1px solid rgba(16,185,129,0.12)" }}
+            style={{ overflow: "hidden", borderTop: "1px solid rgba(94,234,212,0.1)" }}
           >
             <div style={{ padding: "12px 14px 14px" }}>
-              <div style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.6, marginBottom: 8 }}>
+              <div style={{ fontSize: 12, color: T.muted, lineHeight: 1.6, marginBottom: 8 }}>
                 {warning.clinical_rule}
               </div>
               {warning.derived_column_suggestion && (
                 <div style={{
                   display: "flex", alignItems: "center", gap: 7,
                   padding: "7px 10px", borderRadius: 6,
-                  background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.15)",
-                  fontSize: 12, color: "#34d399",
+                  background: "rgba(94,234,212,0.05)", border: "1px solid rgba(94,234,212,0.12)",
+                  fontSize: 12, color: T.primary,
                 }}>
                   <Lightbulb size={13} />
                   Coluna derivada sugerida:{" "}
-                  <span style={{ fontFamily: "monospace", marginLeft: 4 }}>
+                  <span style={{ fontFamily: "'IBM Plex Mono', monospace", marginLeft: 4 }}>
                     {warning.derived_column_suggestion}
                   </span>
                 </div>
               )}
               {warning.reference && (
-                <div style={{ fontSize: 11, color: "#475569", marginTop: 8 }}>
+                <div style={{ fontSize: 11, color: T.dim, marginTop: 8 }}>
                   📚 {warning.reference}
                 </div>
               )}
@@ -635,7 +630,6 @@ export default function ColumnDomainReview({
         source: ch.domainOverride?.source || r.source,
       };
     });
-    // Inclui candidatos derivados para que o Dashboard saiba quais criar
     await onConfirm(finalChoices, derivedCandidates);
     setConfirming(false);
   }, [resolutions, choices, derivedCandidates, onConfirm]);
@@ -643,13 +637,14 @@ export default function ColumnDomainReview({
   const needsAttention = resolutions.length > 0 || bilateralWarnings.length > 0 || derivedCandidates.length > 0;
   if (!isOpen || !needsAttention) return null;
 
-  const totalColumns = resolutions.length;
-  const confirmedCount = resolutions.filter(r => {
+  const detectedResolutions = resolutions.filter(r => r.needs_attention || r.domain);
+  const totalColumns = detectedResolutions.length;
+  const confirmedCount = detectedResolutions.filter(r => {
     const ch = choices[r.column];
-    return ch?.domainOverride || (ch?.userChoice ?? r.suggested_transformation) !== "none" || r.domain === null;
+    return ch?.domainOverride || (ch?.userChoice ?? r.suggested_transformation) !== "none";
   }).length;
 
-  return (
+  return createPortal(
     <AnimatePresence>
       <motion.div
         key="overlay"
@@ -658,9 +653,10 @@ export default function ColumnDomainReview({
         exit={{ opacity: 0 }}
         style={{
           position: "fixed", inset: 0, zIndex: 800,
-          background: "rgba(0,0,0,0.72)", backdropFilter: "blur(8px)",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          padding: "20px 16px",
+          background: "rgba(0,0,0,0.6)", backdropFilter: "blur(6px)",
+          display: "flex", alignItems: "flex-start", justifyContent: "center",
+          padding: "0 16px",
+          overflowY: "auto",
         }}
       >
         <motion.div
@@ -670,53 +666,53 @@ export default function ColumnDomainReview({
           exit={{ scale: 0.96, opacity: 0, y: 20 }}
           transition={{ type: "spring", stiffness: 320, damping: 28 }}
           style={{
-            background: "#0b1221",
+            background: T.bg,
             borderRadius: 16,
-            boxShadow: "0 30px 80px rgba(0,0,0,0.7), 0 0 0 1px rgba(99,102,241,0.15)",
+            boxShadow: `0 25px 60px rgba(0,0,0,0.5), 0 0 0 0.5px ${T.border}`,
             width: "100%",
             maxWidth: 720,
-            maxHeight: "88vh",
+            maxHeight: "calc(100vh - 48px)",
+            margin: "24px 0",
             display: "flex",
             flexDirection: "column",
             overflow: "hidden",
+            flexShrink: 0,
           }}
         >
           {/* Header */}
           <div style={{
             padding: "22px 24px 16px",
-            borderBottom: "1px solid #1a2234",
+            borderBottom: `0.5px solid ${T.border}`,
             flexShrink: 0,
           }}>
             <div style={{ display: "flex", alignItems: "flex-start", gap: 14 }}>
               <div style={{
                 width: 44, height: 44, borderRadius: 10,
-                background: "rgba(99,102,241,0.12)", border: "1px solid rgba(99,102,241,0.2)",
+                background: "rgba(94,234,212,0.08)", border: "1px solid rgba(94,234,212,0.2)",
                 display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
               }}>
-                <Sparkles size={20} style={{ color: "#818cf8" }} />
+                <Sparkles size={20} style={{ color: T.primary }} />
               </div>
               <div style={{ flex: 1 }}>
-                <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "#f1f5f9" }}>
-                  Revisão de Categorias Especializadas
+                <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: T.text, fontFamily: "'Inter', sans-serif" }}>
+                  Revisao de Variaveis
                 </h2>
-                <p style={{ margin: "4px 0 0", fontSize: 13, color: "#64748b", lineHeight: 1.5 }}>
-                  {totalColumns > 0
-                    ? `${totalColumns} coluna${totalColumns > 1 ? "s" : ""} detectada${totalColumns > 1 ? "s" : ""}. Confirme ou refine com IA / catálogo.`
-                    : "Revise os avisos clínicos antes de prosseguir."
-                  }
+                <p style={{ margin: "4px 0 0", fontSize: 13, color: T.muted, lineHeight: 1.5 }}>
+                  {resolutions.length} variave{resolutions.length > 1 ? "is" : "l"} encontrada{resolutions.length > 1 ? "s" : ""}
+                  {totalColumns > 0 ? ` (${totalColumns} com categoria detectada)` : ""}.
+                  {" "}Classifique ou refine com IA / catalogo.
                 </p>
 
-                {/* Legenda dos modos */}
                 <div style={{
                   display: "flex", gap: 12, marginTop: 10, flexWrap: "wrap",
                 }}>
                   {MODES.map(({ key, label, Icon }) => (
-                    <div key={key} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#374151" }}>
+                    <div key={key} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: T.dim }}>
                       <Icon size={11} />
-                      <strong style={{ color: "#475569" }}>{label}</strong>
-                      {key === "auto" && " — aceita sugestão automática"}
+                      <strong style={{ color: T.muted }}>{label}</strong>
+                      {key === "auto" && " — aceita sugestao automatica"}
                       {key === "ai" && " — ativa IA com streaming"}
-                      {key === "catalog" && " — busca manual no catálogo"}
+                      {key === "catalog" && " — busca manual no catalogo"}
                     </div>
                   ))}
                 </div>
@@ -725,7 +721,7 @@ export default function ColumnDomainReview({
                 onClick={onSkip}
                 title="Pular revisão"
                 style={{
-                  background: "none", border: "none", color: "#475569",
+                  background: "none", border: "none", color: T.dim,
                   cursor: "pointer", padding: 4, borderRadius: 6,
                 }}
                 aria-label="Fechar revisão"
@@ -738,12 +734,12 @@ export default function ColumnDomainReview({
             {totalColumns > 0 && (
               <div style={{
                 marginTop: 16, height: 3, borderRadius: 2,
-                background: "#1a2234", overflow: "hidden",
+                background: T.border, overflow: "hidden",
               }}>
                 <motion.div
                   initial={{ width: 0 }}
                   animate={{ width: `${(confirmedCount / totalColumns) * 100}%` }}
-                  style={{ height: "100%", background: "#6366f1", borderRadius: 2 }}
+                  style={{ height: "100%", background: T.primary, borderRadius: 2 }}
                 />
               </div>
             )}
@@ -757,7 +753,7 @@ export default function ColumnDomainReview({
               <div style={{ marginBottom: 20 }}>
                 <div style={{
                   display: "flex", alignItems: "center", gap: 7, marginBottom: 10,
-                  color: "#10b981", fontSize: 12, fontWeight: 700,
+                  color: T.primary, fontSize: 12, fontWeight: 700,
                   textTransform: "uppercase", letterSpacing: "0.06em",
                 }}>
                   <Eye size={13} />
@@ -770,75 +766,105 @@ export default function ColumnDomainReview({
             )}
 
             {/* Cards de coluna */}
-            {resolutions.length > 0 && (
-              <div>
-                {bilateralWarnings.length > 0 && (
-                  <div style={{
-                    display: "flex", alignItems: "center", gap: 7, marginBottom: 10,
-                    color: "#818cf8", fontSize: 12, fontWeight: 700,
-                    textTransform: "uppercase", letterSpacing: "0.06em",
-                  }}>
-                    <FlaskConical size={13} />
-                    Categorias por Coluna
-                  </div>
-                )}
-                {resolutions.map((res, i) => (
-                  <ColumnResolutionCard
-                    key={res.column}
-                    resolution={{ ...res, ...choices[res.column] }}
-                    index={i}
-                    onChange={handleChange}
-                  />
-                ))}
-              </div>
-            )}
+            {(() => {
+              const detected = resolutions.filter(r => r.needs_attention || r.domain);
+              const others = resolutions.filter(r => !r.needs_attention && !r.domain);
+              return (
+                <>
+                  {detected.length > 0 && (
+                    <div style={{ marginBottom: others.length > 0 ? 20 : 0 }}>
+                      <div style={{
+                        display: "flex", alignItems: "center", gap: 7, marginBottom: 10,
+                        color: T.primary, fontSize: 12, fontWeight: 700,
+                        textTransform: "uppercase", letterSpacing: "0.06em",
+                      }}>
+                        <FlaskConical size={13} />
+                        Categorias Detectadas ({detected.length})
+                      </div>
+                      {detected.map((res, i) => (
+                        <ColumnResolutionCard
+                          key={res.column}
+                          resolution={{ ...res, ...choices[res.column] }}
+                          index={i}
+                          onChange={handleChange}
+                        />
+                      ))}
+                    </div>
+                  )}
+
+                  {others.length > 0 && (
+                    <div>
+                      <div style={{
+                        display: "flex", alignItems: "center", gap: 7, marginBottom: 10,
+                        color: T.muted, fontSize: 12, fontWeight: 700,
+                        textTransform: "uppercase", letterSpacing: "0.06em",
+                      }}>
+                        <List size={13} />
+                        Demais Variaveis ({others.length})
+                      </div>
+                      <p style={{ fontSize: 12, color: T.dim, marginBottom: 12, marginTop: 0 }}>
+                        Expanda para classificar com IA ou catalogo, se necessario.
+                      </p>
+                      {others.map((res, i) => (
+                        <ColumnResolutionCard
+                          key={res.column}
+                          resolution={{ ...res, ...choices[res.column] }}
+                          index={detected.length + i}
+                          onChange={handleChange}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
 
             {/* Variáveis Derivadas Automáticas */}
             {derivedCandidates.length > 0 && (
               <div style={{ marginBottom: 16 }}>
                 <div style={{
                   display: "flex", alignItems: "center", gap: 7, marginBottom: 10,
-                  color: "#f59e0b", fontSize: 12, fontWeight: 700,
+                  color: T.primary, fontSize: 12, fontWeight: 700,
                   textTransform: "uppercase", letterSpacing: "0.06em",
                 }}>
                   <Sparkles size={13} />
-                  Variáveis Derivadas (criadas automaticamente)
+                  Variaveis Derivadas (criadas automaticamente)
                 </div>
                 <div style={{
-                  background: "rgba(245,158,11,0.05)",
-                  border: "1px solid rgba(245,158,11,0.18)",
+                  background: "rgba(94,234,212,0.03)",
+                  border: "1px solid rgba(94,234,212,0.12)",
                   borderRadius: 10, padding: "12px 16px",
                 }}>
-                  <div style={{ color: "#fbbf24", fontWeight: 600, marginBottom: 10, fontSize: 13 }}>
-                    As seguintes variáveis serão criadas automaticamente e ficarão disponíveis como desfecho:
+                  <div style={{ color: T.primary, fontWeight: 600, marginBottom: 10, fontSize: 13 }}>
+                    As seguintes variaveis serao criadas automaticamente e ficarao disponiveis como desfecho:
                   </div>
                   {derivedCandidates.map((c, i) => (
                     <div key={i} style={{
                       display: "flex", alignItems: "center", gap: 10,
                       padding: "8px 10px", borderRadius: 7, marginBottom: 6,
-                      background: "rgba(245,158,11,0.06)",
-                      border: "1px solid rgba(245,158,11,0.12)",
+                      background: "rgba(94,234,212,0.04)",
+                      border: "1px solid rgba(94,234,212,0.08)",
                     }}>
-                      <CheckCircle2 size={14} style={{ color: "#10b981", flexShrink: 0 }} />
+                      <CheckCircle2 size={14} style={{ color: T.primary, flexShrink: 0 }} />
                       <div style={{ flex: 1 }}>
-                        <span style={{ fontFamily: "monospace", color: "#fbbf24", fontWeight: 600, fontSize: 13 }}>
+                        <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: T.primary, fontWeight: 600, fontSize: 13 }}>
                           {c.derived_name}
                         </span>
                         {c.formula && (
-                          <span style={{ color: "#64748b", marginLeft: 8, fontSize: 11 }}>
+                          <span style={{ color: T.muted, marginLeft: 8, fontSize: 11 }}>
                             ({c.formula})
                           </span>
                         )}
                         {c.sources && (
-                          <span style={{ color: "#475569", marginLeft: 6, fontSize: 11 }}>
+                          <span style={{ color: T.dim, marginLeft: 6, fontSize: 11 }}>
                             ← {Array.isArray(c.sources) ? c.sources.join(" + ") : c.sources}
                           </span>
                         )}
                       </div>
                       <span style={{
                         fontSize: 10, padding: "2px 7px", borderRadius: 20,
-                        background: "rgba(16,185,129,0.1)", color: "#34d399",
-                        border: "1px solid rgba(16,185,129,0.2)", whiteSpace: "nowrap",
+                        background: "rgba(94,234,212,0.08)", color: T.primary,
+                        border: "1px solid rgba(94,234,212,0.15)", whiteSpace: "nowrap",
                       }}>
                         {c.type === "best_eye" ? "Melhor olho" :
                          c.type === "snellen_to_logmar" ? "LogMAR" :
@@ -854,16 +880,16 @@ export default function ColumnDomainReview({
             {/* Nota de rodapé */}
             <div style={{
               display: "flex", gap: 8, padding: "10px 12px",
-              background: "rgba(100,116,139,0.06)", borderRadius: 8,
-              border: "1px solid #1a2234", marginTop: 4,
-              fontSize: 11, color: "#475569", lineHeight: 1.6,
+              background: "rgba(255,255,255,0.02)", borderRadius: 8,
+              border: `1px solid ${T.border}`, marginTop: 4,
+              fontSize: 11, color: T.dim, lineHeight: 1.6,
             }}>
-              <Info size={13} style={{ color: "#4b5563", marginTop: 1, flexShrink: 0 }} />
+              <Info size={13} style={{ color: T.dim, marginTop: 1, flexShrink: 0 }} />
               <span>
-                Use o modo <strong style={{ color: "#818cf8" }}>Automático</strong> para
-                aceitar a detecção, <strong style={{ color: "#818cf8" }}>Sugerir IA</strong> para
-                uma análise aprofundada, ou <strong style={{ color: "#818cf8" }}>Catálogo</strong> para
-                busca manual. Se uma categoria ainda não existe, envie uma sugestão ao desenvolvedor.
+                Use o modo <strong style={{ color: T.primary }}>Automatico</strong> para
+                aceitar a deteccao, <strong style={{ color: T.primary }}>Sugerir IA</strong> para
+                uma analise aprofundada, ou <strong style={{ color: T.primary }}>Catalogo</strong> para
+                busca manual. Se uma categoria ainda nao existe, envie uma sugestao ao desenvolvedor.
               </span>
             </div>
           </div>
@@ -872,24 +898,24 @@ export default function ColumnDomainReview({
           <div style={{
             display: "flex", alignItems: "center", justifyContent: "space-between",
             padding: "16px 24px",
-            borderTop: "1px solid #1a2234",
-            background: "#0b1221",
+            borderTop: `0.5px solid ${T.border}`,
+            background: T.bg,
             flexShrink: 0,
           }}>
             <button
               onClick={onSkip}
               style={{
                 padding: "9px 18px", borderRadius: 8,
-                background: "transparent", border: "1px solid #253354",
-                color: "#475569", fontSize: 13, cursor: "pointer",
+                background: "transparent", border: `1px solid ${T.border}`,
+                color: T.muted, fontSize: 13, cursor: "pointer",
               }}
             >
-              Pular (usar padrões)
+              Pular (usar padroes)
             </button>
 
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               {totalColumns > 0 && (
-                <span style={{ fontSize: 12, color: "#475569" }}>
+                <span style={{ fontSize: 12, color: T.dim }}>
                   {confirmedCount}/{totalColumns} revisada{confirmedCount !== 1 ? "s" : ""}
                 </span>
               )}
@@ -901,10 +927,10 @@ export default function ColumnDomainReview({
                 style={{
                   display: "flex", alignItems: "center", gap: 8,
                   padding: "9px 22px", borderRadius: 8,
-                  background: confirming ? "#2c3359" : "linear-gradient(135deg, #4f46e5, #6366f1)",
-                  border: "none", color: "#fff", fontSize: 13, fontWeight: 600,
+                  background: confirming ? T.border : T.primary,
+                  border: "none", color: confirming ? T.muted : T.accent, fontSize: 13, fontWeight: 600,
                   cursor: confirming ? "not-allowed" : "pointer",
-                  boxShadow: confirming ? "none" : "0 4px 16px rgba(99,102,241,0.35)",
+                  boxShadow: confirming ? "none" : "0 4px 16px rgba(94,234,212,0.15)",
                   transition: "all 0.2s",
                 }}
                 id="domain-review-confirm-btn"
@@ -916,6 +942,7 @@ export default function ColumnDomainReview({
           </div>
         </motion.div>
       </motion.div>
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body
   );
 }
