@@ -26,7 +26,7 @@ from statsmodels.api import Logit, add_constant
 from lifelines import KaplanMeierFitter
 from lifelines.statistics import logrank_test
 from bs4 import BeautifulSoup
-from stats_engine import engine as premium_engine
+from stats_engine import engine as premium_engine, clean_dataframe, choose_and_run_group_comparison, calculate_power_and_required_n
 from meta_pipeline import run_pipeline
 from clinical_transforms import (
     detect_derived_candidates,
@@ -747,6 +747,7 @@ async def upload_file_v6(file: UploadFile = File(...), outcome: Optional[str] = 
         if file.filename.endswith('.csv'): df = robust_read_csv(contents)
         else: df = robust_read_excel(contents)
         df = sanitize_df(df)
+        df, warnings = clean_dataframe(df)
         
         if is_summary_table(df):
             msg = "Esta parece uma Planilha de Resumo/Frequências. Para realizar análises estatísticas, o Paper Metrics precisa da Planilha de Microdados (onde cada linha é um paciente e cada coluna é uma variável)."
@@ -823,6 +824,7 @@ async def upload_file_v6(file: UploadFile = File(...), outcome: Optional[str] = 
         
         return clean_dict_values({
             "filename": file.filename, 
+            "warnings": warnings,
             "rows": len(df), 
             "columns": df.columns.tolist(), 
             "summary": summary, 
@@ -1469,10 +1471,24 @@ async def analyze_protocol_v7(
         # ============================================================
         # PASSO 1: Classificação detalhada de cada variável
         # ============================================================
+        def get_clean_unique_count(series: pd.Series, col_name: str) -> int:
+            s = series.dropna().copy()
+            # Detecta coluna de gênero e padroniza antes de contar
+            if str(col_name).lower().strip() in ("genero", "gênero", "sex", "sexo"):
+                s = s.astype(str).str.strip().str.upper()
+                s = s.replace({
+                    'MASCULINO': 'M', 'FEMININO': 'F',
+                    'MASC': 'M', 'FEM': 'F',
+                    'MAN': 'M', 'WOMAN': 'F',
+                    'MALE': 'M', 'FEMALE': 'F'
+                })
+                s = s[s.isin(['M', 'F'])]
+            return len(s.unique())
+
         var_info = {}
         for col in df.columns:
             col_series = pd.to_numeric(df[col].astype(str).str.replace(',', '.'), errors='coerce')
-            unique_count = len(df[col].dropna().unique())
+            unique_count = get_clean_unique_count(df[col], col)
             non_null = col_series.dropna()
             # Variáveis clínicas (LogMAR, Decimal, mmHg) são tratadas como numéricas mesmo com poucos valores únicos ou erro de conversão
             is_clinical_domain = any(d in col.lower() for d in ['(logmar)', '(decimal)', '(mmhg)', '(snellen)'])
@@ -2944,7 +2960,10 @@ async def execute_protocol_v8(file: UploadFile = File(...), protocol: str = Form
         df = _apply_clinical_transforms(df, outcome_col=outcome, domain_transformations=domain_transformations)
 
         # Validação de dados
+        df, engine_warnings = clean_dataframe(df)
         validation_report, df = validate_and_clean_data(df)
+        if engine_warnings:
+            validation_report["issues"].extend(engine_warnings)
         
         results = []
         errors_detected = []
@@ -2966,6 +2985,15 @@ async def execute_protocol_v8(file: UploadFile = File(...), protocol: str = Form
             # TIPO 1: Testes pareados e correlações (duas colunas numéricas)
             # ============================================================
             if col_a and col_b and col_a in df.columns and col_b in df.columns:
+                if test and "spearman" in str(test).lower():
+                    a_base = col_a.replace(" (LogMAR)", "").replace(" (Decimal)", "").strip()
+                    b_base = col_b.replace(" (LogMAR)", "").replace(" (Decimal)", "").strip()
+                    from clinical_transforms import _find_role
+                    role_a = _find_role(a_base)
+                    role_b = _find_role(b_base)
+                    if a_base.lower() == b_base.lower() or (role_a and role_a == role_b):
+                        continue
+                        
                 df_curr = df[[col_a, col_b]].dropna()
                 if len(df_curr) < 3:
                     errors_detected.append({"test": var_name, "error": "Dados insuficientes (< 3 observações válidas)."})
@@ -3080,6 +3108,11 @@ async def execute_protocol_v8(file: UploadFile = File(...), protocol: str = Form
                             power = estimate_achieved_power("spearman", n=len(vals_a), r=stat)
                             if power: effect_size["achieved_power"] = power
                     
+                    power_analysis_res = None
+                    if "Spearman" in test or "spearman" in test.lower():
+                        if stat is not None and not pd.isna(stat):
+                            power_analysis_res = calculate_power_and_required_n(effect_size=abs(stat))
+
                     interp_test = "ttest_paired" if "T Pareado" in test else "wilcoxon" if "Wilcoxon" in test else "pearson" if "Pearson" in test else "spearman"
                     interpretation = generate_interpretation(interp_test, stat, p_val, effect_size)
                     
@@ -3096,6 +3129,8 @@ async def execute_protocol_v8(file: UploadFile = File(...), protocol: str = Form
                         "interpretation": interpretation,
                         "visualization": viz
                     }
+                    if power_analysis_res:
+                        result_item["power_analysis"] = power_analysis_res
                     results.append(result_item)
                     
                 except Exception as e:
@@ -3223,12 +3258,20 @@ async def execute_protocol_v8(file: UploadFile = File(...), protocol: str = Form
                             raise ValueError("Grupos insuficientes para ANOVA.")
                     
                     elif "Kruskal" in test:
-                        pg_res = pg_kruskal(df_curr, outcome_col_pair, predictor)
-                        if pg_res:
-                            stat, p_val = pg_res["statistic"], pg_res["p_value"]
-                            effect_size = {"eta_squared": pg_res["eta_squared"], "interpretation": interpret_eta_squared(pg_res["eta_squared"])}
-                        else:
-                            raise ValueError("Grupos insuficientes para Kruskal-Wallis.")
+                        # Redireciona para função centralizada que trata NAN,
+                        # escolhe Mann-Whitney U para 2 grupos e KW para 3+
+                        group_res = choose_and_run_group_comparison(
+                            df_curr, outcome_col_pair, predictor
+                        )
+                        stat = group_res["statistic"]
+                        p_val = group_res["p_value"]
+                        test = group_res["test"]
+                        effect_size = {
+                            "eta_squared": group_res.get("eta_squared"),
+                            "interpretation": group_res.get("effect_label")
+                        }
+                        if group_res.get("msg"):
+                            raise ValueError(group_res["msg"])
                     
                     elif "Qui-Quadrado" in test or "Chi-Square" in test:
                         contingency = pd.crosstab(df_curr[predictor], df_curr[outcome_col_pair])
@@ -3400,13 +3443,13 @@ async def execute_protocol_v8(file: UploadFile = File(...), protocol: str = Form
                             raise ValueError("Preditores insuficientes para Regressão Logística.")
                     
                     else:
-                        pg_res = pg_kruskal(df_curr, outcome_col_pair, predictor)
-                        if pg_res:
-                            stat, p_val = pg_res["statistic"], pg_res["p_value"]
-                            test = f"Kruskal-Wallis H (pingouin)"
-                            effect_size = {"eta_squared": pg_res["eta_squared"], "interpretation": interpret_eta_squared(pg_res["eta_squared"])}
-                        else:
-                            raise ValueError(f"Teste não reconhecido: {test}")
+                        group_res = choose_and_run_group_comparison(df_curr, outcome_col_pair, predictor)
+                        stat = group_res["statistic"]
+                        p_val = group_res["p_value"]
+                        test = group_res["test"]
+                        effect_size = None
+                        if group_res.get("msg"):
+                            raise ValueError(group_res["msg"])
                     
                     median_val = float(np.median(outcome_data)) if len(outcome_data) > 0 else None
                     q1 = float(np.percentile(outcome_data, 25)) if len(outcome_data) > 0 else None
@@ -3478,6 +3521,32 @@ async def execute_protocol_v8(file: UploadFile = File(...), protocol: str = Form
                     err_msg = str(e)
                     print(f"MATH ERR {var_name} ({test}): {err_msg}")
                     errors_detected.append({"test": var_name, "error": err_msg})
+                    
+                    # Tenta choose_and_run_group_comparison antes do fallback bruto
+                    try:
+                        group_res = choose_and_run_group_comparison(
+                            df_curr, outcome_col_pair, predictor
+                        )
+                        if group_res.get("statistic") is not None:
+                            results.append({
+                                "testLabel": f"{var_name} ({group_res['test']} - smart fallback)",
+                                "statistic": round(float(group_res["statistic"]), 4),
+                                "p_value": round(float(group_res["p_value"]), 4) if group_res.get("p_value") is not None else None,
+                                "median_iqr": None,
+                                "group_stats": None,
+                                "chart_data": None,
+                                "effect_size": {
+                                    "eta_squared": group_res.get("eta_squared"),
+                                    "interpretation": group_res.get("effect_label")
+                                },
+                                "ci": None,
+                                "recovered": True,
+                                "visualization": {"primary": "table", "secondary": "bar"}
+                            })
+                            continue
+                    except:
+                        pass
+                    
                     try:
                         unique_groups_f = sorted(df[[predictor, outcome_col_pair]].dropna()[predictor].dropna().unique(), key=lambda x: str(x))
                         all_groups_f = [pd.to_numeric(df[df[predictor] == v][outcome_col_pair], errors='coerce').dropna().values for v in unique_groups_f]
