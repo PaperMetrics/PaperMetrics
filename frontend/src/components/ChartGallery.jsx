@@ -12,11 +12,11 @@ export default function ChartGallery({ projectId }) {
   const [typeFilter, setTypeFilter] = useState('todos')
 
   const fetcher = (url) => fetch(url, {
-    headers: { 'Authorization': `Bearer ${session?.sessionToken}` }
+    headers: { 'Authorization': `Bearer ${session?.token}` }
   }).then(res => res.json())
 
   const { data: charts = [], mutate: fetchCharts, isLoading: loading } = useSWR(
-    (projectId && session?.sessionToken) ? `${API_URL}/api/projects/${projectId}/charts` : null,
+    (projectId && session?.token) ? `${API_URL}/api/projects/${projectId}/charts` : null,
     fetcher,
     { revalidateOnFocus: false }
   )
@@ -26,7 +26,7 @@ export default function ChartGallery({ projectId }) {
     try {
       const res = await fetch(`${API_URL}/api/projects/${projectId}/charts/${id}`, {
         method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${session.sessionToken}` }
+        headers: { 'Authorization': `Bearer ${session.token}` }
       })
       if (res.ok) {
         setSelectedChart(null)
@@ -107,7 +107,7 @@ export default function ChartGallery({ projectId }) {
                  }}
                >
                 <img 
-                  src={`${API_URL}/api/charts/${chart.id}/thumb?token=${session?.sessionToken}`} 
+                  src={`${API_URL}/api/charts/${chart.id}/thumb?token=${session?.token}`} 
                   alt={chart.filename}
                   className="w-full h-full object-contain p-2"
                   loading="lazy"
@@ -170,7 +170,7 @@ export default function ChartGallery({ projectId }) {
                      Anterior
                    </button>
                    <a 
-                     href={`${API_URL}/api/charts/${selectedChart.id}/file?token=${session?.sessionToken}`}
+                     href={`${API_URL}/api/charts/${selectedChart.id}/file?token=${session?.token}`}
                      download
                      target="_blank"
                      rel="noreferrer"
@@ -208,7 +208,7 @@ export default function ChartGallery({ projectId }) {
 
               <div className="flex-1 min-h-0 bg-stone-950/80 p-4 sm:p-8 rounded-b-2xl border-x border-b border-white/10 shadow-2xl overflow-auto custom-scrollbar flex items-center justify-center pointer-events-auto">
                 <img 
-                  src={`${API_URL}/api/charts/${selectedChart.id}/file?token=${session?.sessionToken}`} 
+                  src={`${API_URL}/api/charts/${selectedChart.id}/file?token=${session?.token}`} 
                   alt={selectedChart.filename}
                   className="max-w-full max-h-[70vh] object-contain rounded-xl shadow-2xl ring-1 ring-white/10"
                 />

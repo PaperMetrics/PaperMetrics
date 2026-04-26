@@ -24,10 +24,10 @@ export function useSciStatData() {
   }, [activeProjectId])
 
   const fetchData = useCallback(async () => {
-    if (!isAuthenticated || !session?.sessionToken) return
+    if (!isAuthenticated || !session?.token) return
 
     const headers = {
-        'Authorization': `Bearer ${session.sessionToken}`
+        'Authorization': `Bearer ${session.token}`
     }
 
     try {
@@ -52,8 +52,8 @@ export function useSciStatData() {
   }, [isAuthenticated, session])
 
   const clearNotifications = async () => {
-    if (!isAuthenticated || !session?.sessionToken) return
-    const headers = { 'Authorization': `Bearer ${session.sessionToken}` }
+    if (!isAuthenticated || !session?.token) return
+    const headers = { 'Authorization': `Bearer ${session.token}` }
     try {
       await fetch(`${API_BASE}/notifications/clear`, { method: 'POST', headers })
       setNotifications([])

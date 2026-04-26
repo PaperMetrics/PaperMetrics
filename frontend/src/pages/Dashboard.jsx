@@ -13,213 +13,213 @@ import ColumnDomainReview from '../components/ColumnDomainReview'
 const TEST_EXPLANATIONS = {
   'Teste Qui-Quadrado (χ²)': {
     title: 'Teste Qui-Quadrado (χ²)',
-    what: 'Compara frequências observadas com frequências esperadas para verificar se duas variáveis categóricas estão associadas.',
-    when: 'Use quando tiver duas variáveis categóricas (ex: sexo vs diagnóstico) e quiser saber se existe relação entre elas.',
-    example: 'Verificar se há associação entre fumar (sim/não) e doença pulmonar (sim/não).',
-    assumption: 'Esperas ≥ 5 em cada célula da tabela. Se não inúmer, use Fisher.'
+    what: 'Verifica se existe associação entre duas variáveis categóricas. Ele compara as frequências que você observou nos dados com as frequências que seriam esperadas se não houvesse nenhuma relação entre as variáveis.',
+    when: 'Quando você tem duas variáveis em categorias (ex: grupo de tratamento vs desfecho) e quer saber se elas estão relacionadas. Exige que cada célula da tabela tenha pelo menos 5 observações esperadas.',
+    example: 'Investigar se existe associação entre tabagismo (sim/não) e desenvolvimento de DPOC (sim/não) em uma coorte de 200 pacientes.',
+    assumption: 'Frequências esperadas >= 5 em todas as células. Observações independentes. Se alguma célula tiver esperado < 5, use o Teste Exato de Fisher.'
   },
   'Teste Exato de Fisher': {
     title: 'Teste Exato de Fisher',
-    what: 'Versão do Qui-Quadrado para amostras pequenas ou tabelas desbalanceadas.',
-    when: 'Use quando o Qui-Quadrado não funciona (células com esperados < 5), especialmente em tabelas 2x2.',
-    example: 'Comparar sucesso de tratamento entre 2 grupos muito desbalanceados (ex: 3 vs 15 pacientes).',
-    assumption: 'Não requer distribuição normal. Ideal para N total < 20.'
+    what: 'Calcula a probabilidade exata de observar a distribuição dos dados em uma tabela de contingência. É a alternativa ao Qui-Quadrado quando a amostra é pequena ou as células têm contagens baixas.',
+    when: 'Quando o Qui-Quadrado não é confiável: amostras pequenas (N < 20), tabelas 2x2 com células com valores esperados < 5, ou grupos muito desbalanceados.',
+    example: 'Comparar taxa de eventos adversos graves entre droga experimental (n=8) e placebo (n=12) em um estudo piloto de fase I.',
+    assumption: 'Não exige tamanho mínimo de amostra. Funciona para qualquer tabela de contingência, mas é computacionalmente ideal para tabelas 2x2.'
   },
   'Teste t de Student (pareado)': {
     title: 'Teste t Pareado',
-    what: 'Compara duas médias de grupos pareados (mesmos indivíduos medidos duas vezes).',
-    when: 'Use antes/depois de um tratamento no mesmo grupo de pacientes.',
-    example: 'Comparar pressão arterial antes e depois de um medicamento nos mesmos pacientes.',
-    assumption: 'Diferenças devem ter distribuição normal (ou N > 30).'
+    what: 'Compara as médias de duas medições feitas nos mesmos indivíduos. Calcula a diferença para cada par e testa se a média dessas diferenças é significativamente diferente de zero.',
+    when: 'Quando você mede a mesma variável nos mesmos pacientes em dois momentos diferentes (antes/depois) ou em duas condições pareadas.',
+    example: 'Avaliar se um anti-hipertensivo reduz a pressão arterial sistólica comparando as medidas pré e pós-tratamento nos mesmos 40 pacientes.',
+    assumption: 'As diferenças entre os pares devem ter distribuição aproximadamente normal. Para N > 30, o teste é robusto mesmo com desvios da normalidade.'
   },
   'Teste t de Student (independente)': {
     title: 'Teste t Independente',
-    what: 'Compara médias de dois grupos independentes (diferentes indivíduos).',
-    when: 'Use para comparar médias entre dois grupos diferentes de sujeitos.',
-    example: 'Comparar nota média de alunos que estudaram 2h vs 4h por dia.',
-    assumption: 'Dados normais em cada grupo e variâncias homogêneas.'
+    what: 'Compara as médias de dois grupos formados por indivíduos diferentes. Avalia se a diferença observada entre os grupos é grande o suficiente para não ser explicada apenas pelo acaso.',
+    when: 'Quando você quer comparar uma variável contínua entre dois grupos independentes (ex: tratamento vs controle com pacientes diferentes em cada grupo).',
+    example: 'Comparar o nível médio de hemoglobina glicada (HbA1c) entre pacientes diabéticos tratados com metformina vs glibenclamida.',
+    assumption: 'Dados com distribuição normal em cada grupo. Variâncias semelhantes entre os grupos (se diferentes, use a correção de Welch, aplicada automaticamente).'
   },
   'ANOVA One-Way': {
     title: 'ANOVA One-Way',
-    what: 'Compara médias de 3 ou mais grupos independentes.',
-    when: 'Use quando quiser comparar mais de dois grupos ao mesmo tempo.',
-    example: 'Comparar eficácia de 3 tipos de medicamento para pressão.',
-    assumption: 'Normalidade e homogeneidade de variâncias. Se não cumprir, use Kruskal-Wallis.'
+    what: 'Extensão do teste t para 3 ou mais grupos. Testa se pelo menos um grupo tem média significativamente diferente dos demais. Se o resultado for significativo, use um teste post-hoc (Tukey ou Bonferroni) para identificar quais pares diferem.',
+    when: 'Quando você quer comparar médias de 3+ grupos independentes ao mesmo tempo. Usar múltiplos testes t inflaria o erro tipo I.',
+    example: 'Comparar a eficácia de 3 protocolos de fisioterapia (A, B, C) medindo a amplitude de movimento do joelho após 8 semanas.',
+    assumption: 'Normalidade em cada grupo. Variâncias homogêneas (teste de Levene). Se violados, considere Kruskal-Wallis.'
   },
   'ANOVA Two-Way': {
     title: 'ANOVA Two-Way',
-    what: 'Compara médias considerando duas variáveis independentes simultaneamente.',
-    when: 'Use quando tiver dois fatores influenciando o resultado (ex: tratamento + sexo).',
-    example: 'Verificar se efeito de medicamento varia entre homens e mulheres.',
-    assumption: 'Normalidade, homogeneidade e independência das observações.'
+    what: 'Analisa o efeito de dois fatores simultaneamente sobre uma variável contínua. Além dos efeitos principais de cada fator, detecta se existe interação entre eles (o efeito de um fator depende do nível do outro).',
+    when: 'Quando você tem dois fatores categóricos (ex: tipo de tratamento e sexo) e quer saber se ambos influenciam o desfecho e se interagem entre si.',
+    example: 'Investigar se o efeito de um analgésico (droga A vs B) sobre a escala de dor varia conforme o sexo do paciente (interação tratamento x sexo).',
+    assumption: 'Normalidade, homogeneidade de variâncias e independência das observações. Amostras equilibradas entre os grupos melhoram a robustez.'
   },
   'ANOVA com Medidas Repetidas': {
     title: 'ANOVA Medidas Repetidas',
-    what: 'Compara médias quando os mesmos indivíduos são medidos em múltiplas condições.',
-    when: 'Use no mesmo sujeito em diferentes momentos ou condições.',
-    example: 'Medir glicemia em jejum, 1h e 2h após refeição nos mesmos pacientes.',
-    assumption: 'Normalidade e esfericidade (variâncias das diferenças iguais).'
+    what: 'Compara médias quando os mesmos indivíduos são avaliados em 3 ou mais condições ou momentos diferentes. Controla a variabilidade individual, aumentando o poder estatístico.',
+    when: 'Quando os mesmos pacientes são medidos repetidamente ao longo do tempo ou sob diferentes condições experimentais.',
+    example: 'Acompanhar a glicemia de jejum de 30 pacientes diabéticos em 4 visitas trimestrais para avaliar a evolução ao longo de 1 ano de tratamento.',
+    assumption: 'Normalidade das medidas. Esfericidade (variâncias das diferenças entre pares de condições devem ser iguais). Se esfericidade é violada, aplica-se correção de Greenhouse-Geisser automaticamente.'
   },
   'Teste de Tukey (Post-hoc)': {
-    title: 'Teste de Tukey',
-    what: 'Teste post-hoc para comparar pares de grupos após ANOVA significativa.',
-    when: 'Use depois de ANOVA significativa para saber exatamente quais grupos diferem.',
-    example: 'Após encontrar diferença entre 4 medicamentos, descobrir qual par específico.',
-    assumption: 'Aplicado após ANOVA significativa.'
+    title: 'Teste de Tukey (HSD)',
+    what: 'Após uma ANOVA significativa, compara todas as combinações possíveis de pares de grupos para identificar exatamente onde estão as diferenças. Controla o erro tipo I global.',
+    when: 'Sempre após uma ANOVA significativa, quando você precisa saber quais grupos específicos diferem entre si. É o post-hoc mais usado quando os tamanhos dos grupos são iguais ou similares.',
+    example: 'A ANOVA mostrou diferença entre 4 doses de um fármaco. O Tukey revela que apenas a dose alta difere significativamente do placebo (p=0.003) e da dose baixa (p=0.01).',
+    assumption: 'Aplicado somente após ANOVA significativa. Pressupõe variâncias homogêneas e tamanhos de grupo similares. Para grupos desiguais, considere Games-Howell.'
   },
   'Teste de Bonferroni': {
-    title: 'Teste de Bonferroni',
-    what: 'Correção para comparações múltiplas, reduzindo o risco de falso positivo.',
-    when: 'Use quando fizer muitas comparações simultâneas.',
-    example: 'Comparar 6 tratamentos entre si (15 comparações).',
-    assumption: 'Conservative mas válido para qualquer tipo de dado.'
+    title: 'Correção de Bonferroni',
+    what: 'Ajusta o nível de significância dividindo-o pelo número de comparações realizadas. É a abordagem mais conservadora para evitar falsos positivos em comparações múltiplas.',
+    when: 'Quando você realiza muitas comparações simultâneas e quer garantir que o risco global de falso positivo não ultrapasse 5%. Útil quando o número de comparações é pequeno.',
+    example: 'Ao comparar 4 grupos dois a dois (6 comparações), o nível de significância ajustado passa de 0.05 para 0.05/6 = 0.0083 por comparação.',
+    assumption: 'Pode ser aplicado a qualquer tipo de teste. Porém, com muitas comparações torna-se excessivamente conservador, aumentando o risco de falso negativo.'
   },
   'Teste de Kruskal-Wallis': {
     title: 'Teste de Kruskal-Wallis',
-    what: 'Versão não-paramétrica da ANOVA — compara distribuições de 3+ grupos.',
-    when: 'Use quando dados não forem normais ou tiverem outliers.',
-    example: 'Comparar tempo de recuperação entre 3 tratamentos com dados muito variados.',
-    assumption: 'Variâncias semelhantes. Não requer normalidade.'
+    what: 'Alternativa não-paramétrica à ANOVA One-Way. Em vez de comparar médias, compara as distribuições (ranks) de 3 ou mais grupos. Não exige que os dados sigam distribuição normal.',
+    when: 'Quando os dados são ordinais, têm distribuição não-normal, apresentam outliers importantes, ou os tamanhos dos grupos são muito diferentes.',
+    example: 'Comparar escores de qualidade de vida (escala ordinal 0-100) entre pacientes tratados com 3 esquemas quimioterápicos diferentes.',
+    assumption: 'Observações independentes. As distribuições dos grupos devem ter formato semelhante (mesmo que não sejam normais). Se significativo, use Dunn como post-hoc.'
   },
   'Teste de Mann-Whitney U': {
     title: 'Teste de Mann-Whitney U',
-    what: 'Versão não-paramétrica do teste t — compara distribuições de 2 grupos.',
-    when: 'Use quando dados não forem normais ou forem ordinais.',
-    example: 'Comparar satisfação (ruim/bom/ótimo) entre dois hospitais.',
-    assumption: 'Não requer normalidade. Compara medianas/ordens.'
+    what: 'Alternativa não-paramétrica ao teste t independente. Compara as distribuições de dois grupos independentes usando ranks em vez de médias. Robusto a outliers e dados não-normais.',
+    when: 'Quando os dados não seguem distribuição normal, são ordinais (escalas de Likert, escores), ou quando os grupos têm tamanhos muito diferentes.',
+    example: 'Comparar escores de dor (EVA 0-10) entre dois grupos de pacientes pós-cirúrgicos que receberam analgésicos diferentes.',
+    assumption: 'Observações independentes entre os grupos. As distribuições devem ter formato semelhante. Não exige normalidade nem variâncias iguais.'
   },
   'Teste de Wilcoxon': {
-    title: 'Teste de Wilcoxon',
-    what: 'Versão não-paramétrica do teste t pareado.',
-    when: 'Use para dados pareados que não seguem distribuição normal.',
-    example: 'Comparar dor antes/depois (escala 0-10) sem assumir normalidade.',
-    assumption: 'Dados pareados, distribuição não-normal.'
+    title: 'Teste de Wilcoxon (Postos Sinalizados)',
+    what: 'Alternativa não-paramétrica ao teste t pareado. Compara duas medições nos mesmos indivíduos usando os ranks das diferenças, sem exigir normalidade.',
+    when: 'Quando você tem dados pareados (antes/depois) que não seguem distribuição normal ou são medidos em escala ordinal.',
+    example: 'Avaliar se um programa de reabilitação melhora o escore funcional (escala ordinal) de pacientes com AVC, comparando medidas pré e pós-intervenção.',
+    assumption: 'Os dados devem ser pareados. As diferenças devem ser simétricas em relação à mediana. Não exige normalidade.'
   },
   'Teste de Friedman': {
     title: 'Teste de Friedman',
-    what: 'ANOVA não-paramétrica para medidas repetidas.',
-    when: 'Use quando os mesmos sujeitos forem medidos múltiplas vezes com dados não-normais.',
-    example: 'Avaliar preferência por 4 marcas em múltiplas visitas.',
-    assumption: 'Não requer normalidade. Dados ordinais também servem.'
+    what: 'Alternativa não-paramétrica à ANOVA de medidas repetidas. Compara 3 ou mais condições medidas nos mesmos indivíduos usando ranks. Ideal para dados ordinais ou não-normais.',
+    when: 'Quando os mesmos sujeitos são avaliados em 3+ condições ou momentos, e os dados não cumprem pressupostos paramétricos.',
+    example: 'Avaliar a intensidade de náusea (escala 0-10) em pacientes oncológicos em 4 ciclos diferentes de quimioterapia.',
+    assumption: 'Dados pareados/repetidos. Os dados podem ser ordinais. Não exige normalidade. Se significativo, use Nemenyi ou Dunn como post-hoc.'
   },
   'Teste de Spearman': {
-    title: 'Correlação de Spearman',
-    what: 'Mede correlação baseada em ranks (não requer normalidade).',
-    when: 'Use para dados não-normais, ordinais ou com outliers.',
-    example: 'Correlacionar idade com nível de dor (escala ordinal).',
-    assumption: 'Não requer normalidade. Sensível a outliers.'
+    title: 'Correlação de Spearman (rho)',
+    what: 'Mede a força e direção da associação monotônica entre duas variáveis usando ranks. Detecta relações não-lineares, desde que sejam consistentemente crescentes ou decrescentes.',
+    when: 'Quando pelo menos uma variável é ordinal, os dados não são normais, há outliers, ou a relação entre as variáveis não é estritamente linear.',
+    example: 'Investigar se existe correlação entre o nível de escolaridade (ordinal: fundamental, médio, superior) e a adesão ao tratamento (escala 0-100).',
+    assumption: 'Relação monotônica entre as variáveis. Não exige normalidade. Mais robusto a outliers que Pearson.'
   },
   'Correlação de Pearson': {
-    title: 'Correlação de Pearson',
-    what: 'Mede força e direção da relação linear entre duas variáveis contínuas.',
-    when: 'Use para variáveis contínuas com distribuição normal.',
-    example: 'Correlacionar altura com peso em adultos.',
-    assumption: 'Ambas variáveis contínuas e normalmente distribuídas.'
+    title: 'Correlação de Pearson (r)',
+    what: 'Mede a força e a direção da relação linear entre duas variáveis contínuas. O coeficiente r varia de -1 (correlação negativa perfeita) a +1 (positiva perfeita). Zero indica ausência de relação linear.',
+    when: 'Quando ambas as variáveis são contínuas, normalmente distribuídas, e você espera uma relação linear entre elas.',
+    example: 'Investigar a correlação entre IMC e pressão arterial sistólica em 150 adultos saudáveis.',
+    assumption: 'Ambas variáveis contínuas e normais. Relação linear. Sensível a outliers (considere Spearman se houver pontos extremos).'
   },
   'Regressão Linear Simples': {
     title: 'Regressão Linear Simples',
-    what: 'Modelo para prever uma variável contínua baseado em uma previsora.',
-    when: 'Use para prever um valor baseado em uma variável.',
-    example: 'Prever pressão arterial baseado na idade.',
-    assumption: 'Linearidade, normalidade dos resíduos, homocedasticidade.'
+    what: 'Cria um modelo matemático que descreve como uma variável (preditora) influencia outra (desfecho). Gera uma equação da reta que permite prever valores e quantificar o efeito.',
+    when: 'Quando você quer prever uma variável contínua com base em uma única variável preditora, e a relação entre elas é aproximadamente linear.',
+    example: 'Modelar como a idade do paciente prediz o tempo de internação após cirurgia cardíaca. A cada 10 anos de idade, o tempo aumenta em X dias.',
+    assumption: 'Linearidade da relação. Resíduos com distribuição normal e variância constante (homocedasticidade). Independência das observações.'
   },
   'Regressão Linear Múltipla': {
     title: 'Regressão Linear Múltipla',
-    what: 'Modelo para prever uma variável contínua baseado em múltiplas previsoras.',
-    when: 'Use quando múltiplos fatores influenciam o resultado.',
-    example: 'Prever pressão considerando idade, peso e exercício.',
-    assumption: 'Mesmas da regressão simples, mais ausência de multicolinearidade.'
+    what: 'Extensão da regressão simples que modela o efeito simultâneo de múltiplas variáveis preditoras sobre um desfecho contínuo. Permite isolar o efeito de cada preditor controlando pelos demais.',
+    when: 'Quando múltiplos fatores podem influenciar o desfecho e você quer entender a contribuição independente de cada um.',
+    example: 'Prever a pressão arterial sistólica a partir de idade, IMC, consumo de sódio e nível de atividade física, estimando o efeito isolado de cada fator.',
+    assumption: 'Mesmos da regressão simples, mais ausência de multicolinearidade (preditores não devem ser altamente correlacionados entre si). Verificar VIF < 5.'
   },
   'Regressão Logística': {
     title: 'Regressão Logística',
-    what: 'Modelo para prever variável dependente binária (sim/não).',
-    when: 'Use para prever probabilidade de um evento binário.',
-    example: 'Prever se paciente terá complicações após cirurgia.',
-    assumption: 'Variável dependente binária, amostra suficiente, sem multicolinearidade.'
+    what: 'Modelo para prever a probabilidade de um desfecho binário (sim/não, vivo/óbito). Calcula odds ratios que quantificam quanto cada fator aumenta ou diminui a chance do evento.',
+    when: 'Quando o desfecho é dicotômico (duas categorias) e você quer identificar fatores de risco ou proteção.',
+    example: 'Identificar fatores associados à readmissão hospitalar em 30 dias (sim/não) considerando idade, comorbidades e tempo de internação.',
+    assumption: 'Desfecho binário. Observações independentes. Amostra suficiente (pelo menos 10-20 eventos por variável preditora). Ausência de multicolinearidade.'
   },
   'Teste de Shapiro-Wilk': {
     title: 'Teste de Shapiro-Wilk',
-    what: 'Teste para verificar se os dados seguem distribuição normal.',
-    when: 'Use antes de testes paramétricos para verificar pressupostos.',
-    example: 'Verificar se notas de alunos seguem distribuição normal.',
-    assumption: 'Ideal para N < 50. Para N maior, use Kolmogorov-Smirnov.'
+    what: 'Verifica se os dados seguem distribuição normal, um pressuposto de muitos testes paramétricos. É o teste de normalidade mais potente para amostras pequenas a moderadas.',
+    when: 'Antes de aplicar testes paramétricos (teste t, ANOVA) para verificar se o pressuposto de normalidade é atendido. Especialmente importante para N < 50.',
+    example: 'Antes de usar ANOVA para comparar 3 grupos, testar se os dados de cada grupo seguem distribuição normal. Se p > 0.05, a normalidade é aceita.',
+    assumption: 'Mais confiável para N < 50. Para amostras maiores, considere Kolmogorov-Smirnov ou métodos gráficos (Q-Q plot).'
   },
   'Teste de Kolmogorov-Smirnov': {
     title: 'Teste de Kolmogorov-Smirnov',
-    what: 'Teste de normalidade para amostras maiores.',
-    when: 'Use para N > 50 para verificar distribuição normal.',
-    example: 'Verificar normalidade em grande estudo clínico.',
-    assumption: 'Não paramétrico, mas sensível a grandes amostras.'
+    what: 'Compara a distribuição dos dados com uma distribuição teórica (geralmente a normal). Mede a maior distância entre a distribuição acumulada dos dados e a teórica.',
+    when: 'Para verificar normalidade em amostras grandes (N > 50), onde o Shapiro-Wilk perde poder. Também pode comparar dois conjuntos de dados entre si.',
+    example: 'Verificar se os valores de creatinina sérica de 500 pacientes seguem distribuição normal antes de calcular intervalos de referência.',
+    assumption: 'Tende a ser conservador (dificilmente rejeita normalidade em amostras pequenas). Para N < 50, prefira Shapiro-Wilk.'
   },
   'Teste de Levene': {
     title: 'Teste de Levene',
-    what: 'Teste para verificar se as variâncias são iguais entre grupos.',
-    when: 'Use antes de ANOVA ou teste t para verificar homogeneidade.',
-    example: 'Verificar se variância de idade é igual em 3 grupos.',
-    assumption: 'Robusto a não-normalidade.'
+    what: 'Verifica se os grupos têm variâncias iguais (homocedasticidade), um pressuposto da ANOVA e do teste t. É mais robusto que o teste de Bartlett quando os dados não são perfeitamente normais.',
+    when: 'Antes de aplicar ANOVA ou teste t para verificar homogeneidade de variâncias. Se violado, use a correção de Welch.',
+    example: 'Antes de comparar glicemia entre 3 grupos, verificar se a variabilidade dos dados é semelhante em todos os grupos (p > 0.05 aceita igualdade).',
+    assumption: 'Robusto a desvios da normalidade. Se p < 0.05, as variâncias são desiguais e você deve usar alternativas (Welch ANOVA, Games-Howell).'
   },
   'Análise de Sobrevivência (Kaplan-Meier)': {
     title: 'Kaplan-Meier',
-    what: 'Estima a probabilidade de sobrevivência em diferentes momentos do tempo.',
-    when: 'Use quando tiver dados de tempo-até-evento com censuras.',
-    example: 'Estimar probabilidade de sobreviver 5 anos após diagnóstico de cáncer.',
-    assumption: 'Censuras independentes do tempo de sobrevivência.'
+    what: 'Estima a probabilidade de sobrevivência (ou de permanecer livre de evento) ao longo do tempo. Gera curvas de sobrevivência que mostram como a proporção de "sobreviventes" diminui com o tempo, considerando dados censurados.',
+    when: 'Quando você tem dados de tempo-até-evento (tempo até óbito, recidiva, alta) e alguns pacientes não apresentaram o evento até o fim do acompanhamento (censura).',
+    example: 'Estimar a sobrevida em 5 anos de pacientes com câncer de mama estágio II, representando graficamente a probabilidade de sobrevivência ao longo dos meses.',
+    assumption: 'Censuras independentes do prognóstico. Os pacientes censurados devem ter o mesmo risco futuro que os que permanecem em observação.'
   },
   'Modelo de Cox (Riscos Proporcionais)': {
     title: 'Modelo de Cox',
-    what: 'Regressão para dados de sobrevivência, estimando efeito de covariáveis.',
-    when: 'Use para entender quais fatores influenciam o tempo até evento.',
-    example: 'Verificar se tratamento afeta tempo de sobrevida controlando por idade.',
-    assumption: 'Riscos proporcionais (constantes ao longo do tempo).'
+    what: 'Regressão para dados de sobrevivência que estima como covariáveis (idade, tratamento, estágio) afetam o risco de um evento ocorrer ao longo do tempo. Produz hazard ratios que quantificam o efeito de cada fator.',
+    when: 'Quando você quer identificar quais fatores influenciam o tempo até o evento, controlando por múltiplas covariáveis simultaneamente.',
+    example: 'Avaliar se o tipo de tratamento (cirurgia vs quimioterapia) afeta a sobrevida de pacientes com câncer, controlando por idade, estágio e comorbidades.',
+    assumption: 'Riscos proporcionais: o efeito de cada covariável deve ser constante ao longo do tempo. Verificar graficamente ou pelo teste de Schoenfeld.'
   },
   'Teste Log-Rank': {
     title: 'Teste Log-Rank',
-    what: 'Compara curvas de sobrevivência entre dois ou mais grupos.',
-    when: 'Use para testar se há diferença significativa entre grupos.',
-    example: 'Comparar sobrevivência entre grupo tratado e placebo.',
-    assumption: 'Censuras similares entre grupos.'
+    what: 'Compara as curvas de sobrevivência de dois ou mais grupos para determinar se há diferença estatisticamente significativa na sobrevivência entre eles.',
+    when: 'Quando você quer comparar a sobrevida entre grupos (ex: tratamento A vs B) sem ajustar por covariáveis. É o "teste t" da análise de sobrevivência.',
+    example: 'Comparar a sobrevida livre de progressão entre pacientes que receberam imunoterapia vs quimioterapia convencional em um ensaio clínico randomizado.',
+    assumption: 'Riscos proporcionais entre os grupos. Censuras independentes e similares entre os grupos. Se os riscos não forem proporcionais, considere testes alternativos.'
   },
   'Metanálise (Efeito Fixo)': {
-    title: 'Metanálise Efeito Fixo',
-    what: 'Combina múltiplos estudos assumindo que todos estimam o mesmo efeito.',
-    when: 'Use quando os estudos forem muito similares (baixa heterogeneidade).',
-    example: 'Combinar resultados de 10 ensaios clínicos do mesmo medicamento.',
-    assumption: 'Baixa heterogeneidade entre estudos (I² < 50%).'
+    title: 'Metanálise de Efeito Fixo',
+    what: 'Combina os resultados de múltiplos estudos assumindo que todos estimam o mesmo efeito verdadeiro. As diferenças entre estudos são atribuídas apenas ao acaso amostral.',
+    when: 'Quando os estudos incluídos são muito homogêneos: mesma população, mesma intervenção, mesmos desfechos. Verificar heterogeneidade com I² < 50%.',
+    example: 'Combinar 8 ensaios clínicos randomizados que testaram a mesma dose de estatina na mesma população para estimar o efeito médio na redução do LDL.',
+    assumption: 'Heterogeneidade baixa (I² < 50%, p do teste Q > 0.10). Se houver heterogeneidade significativa, use efeito aleatório.'
   },
   'Metanálise (Efeito Aleatório)': {
-    title: 'Metanálise Efeito Aleatório',
-    what: 'Combina estudos considerando que cada um tem seu próprio efeito.',
-    when: 'Use quando houver heterogeneidade significativa entre estudos.',
-    example: 'Combinar estudos com diferentes populações ou intervenções.',
-    assumption: 'Heterogeneidade alta (I² > 50%). Mais conservador.'
+    title: 'Metanálise de Efeito Aleatório',
+    what: 'Combina estudos considerando que cada um pode estimar um efeito ligeiramente diferente devido a variações reais na população, intervenção ou contexto. Produz intervalos de confiança mais amplos e conservadores.',
+    when: 'Quando os estudos apresentam heterogeneidade significativa (I² > 50%) ou quando as populações, doses ou protocolos diferem entre estudos.',
+    example: 'Combinar 15 estudos sobre exercício e depressão realizados em diferentes países, com protocolos variados de intensidade e duração.',
+    assumption: 'Aceita heterogeneidade entre estudos. O modelo DerSimonian-Laird é o mais usado. Com poucos estudos (< 5), os intervalos podem ser imprecisos.'
   },
   'Funnel Plot / Viés de Publicação': {
     title: 'Funnel Plot',
-    what: 'Gráfico para detectar viés de publicação em metanálises.',
-    when: 'Use para verificar se estudos pequenos com resultados negativos estão faltando.',
-    example: 'Verificar se estudos com N pequeno e resultado negativo foram publicados.',
-    assumption: 'Simetria indica ausência de viés.'
+    what: 'Gráfico em forma de funil que mapeia o tamanho do efeito vs o tamanho da amostra de cada estudo. Um funil simétrico sugere ausência de viés; assimetria indica que estudos com resultados negativos podem estar faltando.',
+    when: 'Em toda metanálise, para investigar se os resultados podem estar inflados por viés de publicação (tendência de publicar apenas resultados positivos).',
+    example: 'Ao revisar 20 estudos sobre um novo fármaco, o funnel plot revela assimetria: faltam estudos pequenos com resultados negativos, sugerindo viés de publicação.',
+    assumption: 'Necessita de pelo menos 10 estudos para interpretação confiável. A assimetria pode ter outras causas além de viés (heterogeneidade real, diferenças metodológicas).'
   },
   'Cálculo de Poder Amostral': {
     title: 'Poder Amostral',
-    what: 'Calcula o número de sujeitos necessários para detectar um efeito.',
-    when: 'Use no planejamento do estudo para garantir que será possível detectar diferença.',
-    example: 'Calcular quantos pacientes precisa para detectar efeito de 0.5 com 80% poder.',
-    assumption: 'Baseado no efeito esperado, nível de significância e poder.'
+    what: 'Determina quantos participantes você precisa incluir no estudo para ter uma probabilidade aceitável (geralmente 80%) de detectar um efeito real, caso ele exista. Evita estudos subdimensionados que desperdiçam recursos.',
+    when: 'Na fase de planejamento do estudo, antes de coletar dados. É obrigatório em protocolos de ensaios clínicos e altamente recomendado em qualquer pesquisa quantitativa.',
+    example: 'Para detectar uma diferença de 5 mmHg na pressão arterial entre dois grupos (DP=10), com poder de 80% e alfa de 0.05, são necessários 64 pacientes por grupo.',
+    assumption: 'Requer estimativas do tamanho de efeito esperado (de estudos piloto ou literatura), do nível de significância (alfa) e do poder desejado (1-beta).'
   },
   'Teste de McNemar': {
     title: 'Teste de McNemar',
-    what: 'Compara proporções em dados pareados com variável dicotômica.',
-    when: 'Use para dados pareados onde ambos os resultados são binários.',
-    example: 'Comparar cura antes/depois em 50 pacientes pareados.',
-    assumption: 'Pareamento, variável dicotômica.'
+    what: 'Compara proporções em dados pareados quando o desfecho é binário. Foca especificamente nos casos discordantes (onde o resultado mudou entre as duas medições) para testar se a mudança é significativa.',
+    when: 'Quando os mesmos indivíduos são avaliados em dois momentos ou condições e o resultado é sim/não, positivo/negativo.',
+    example: 'Avaliar se a taxa de positividade de um exame diagnóstico muda após treinamento dos operadores: comparar resultados pré e pós-treinamento nos mesmos 100 pacientes.',
+    assumption: 'Dados pareados. Desfecho dicotômico. Amostra suficiente de pares discordantes (pelo menos 10).'
   },
   'Teste de Cochran Q': {
     title: 'Teste de Cochran Q',
-    what: 'Extensão do McNemar para 3+ condições pareadas.',
-    when: 'Use para comparar múltiplas condições nos mesmos sujeitos.',
-    example: 'Comparar eficácia de 3 tratamentos nos mesmos 100 pacientes.',
-    assumption: 'Variável dicotômica, mesmo tamanho de amostra.'
+    what: 'Extensão do teste de McNemar para 3 ou mais condições pareadas com desfecho binário. Testa se a proporção de "sucessos" difere entre as condições.',
+    when: 'Quando os mesmos indivíduos são avaliados em 3+ momentos ou condições e o desfecho é dicotômico (sim/não).',
+    example: 'Comparar a taxa de resposta clínica (respondedor sim/não) dos mesmos 80 pacientes tratados sequencialmente com 3 protocolos diferentes.',
+    assumption: 'Dados pareados com desfecho dicotômico. Mesmo grupo de sujeitos em todas as condições. Se significativo, use McNemar pareado como post-hoc com correção de Bonferroni.'
   }
 }
 
@@ -235,71 +235,65 @@ function getExplanation(testName) {
 // Capability cards shown on the empty state instead of mock charts
 const ANALYSIS_CATEGORIES = [
   {
-    id: 'parametric', title: 'Paramétrico', icon: 'compare', color: 'primary',
+    id: 'parametric', title: 'Paramétrico', icon: 'bar_chart', color: 'primary',
     desc: 'Para dados com distribuição normal — a base dos ensaios clínicos',
-    tests: ['Teste t Independente', 'Teste t Pareado', 'ANOVA One-Way', 'ANOVA Two-Way', 'ANOVA Medidas Repetidas']
+    tests: [
+      { label: 'Teste t Independente', key: 'Teste t de Student (independente)' },
+      { label: 'Teste t Pareado', key: 'Teste t de Student (pareado)' },
+      { label: 'ANOVA One-Way', key: 'ANOVA One-Way' },
+      { label: 'ANOVA Two-Way', key: 'ANOVA Two-Way' },
+      { label: 'ANOVA Medidas Repetidas', key: 'ANOVA com Medidas Repetidas' },
+    ]
   },
   {
-    id: 'nonparametric', title: 'Não-Paramétrico', icon: 'leaderboard', color: 'accent',
+    id: 'nonparametric', title: 'Não-Paramétrico', icon: 'swap_vert', color: 'primary',
     desc: 'Quando os dados não seguem distribuição normal — dados clínicos reais',
-    tests: ['Kruskal-Wallis', 'Mann-Whitney U', 'Wilcoxon', 'Friedman']
+    tests: [
+      { label: 'Kruskal-Wallis', key: 'Teste de Kruskal-Wallis' },
+      { label: 'Mann-Whitney U', key: 'Teste de Mann-Whitney U' },
+      { label: 'Wilcoxon', key: 'Teste de Wilcoxon' },
+      { label: 'Friedman', key: 'Teste de Friedman' },
+    ]
   },
   {
-    id: 'categorical', title: 'Categórico', icon: 'grid_4x4', color: 'primary',
+    id: 'categorical', title: 'Categórico', icon: 'category', color: 'primary',
     desc: 'Para variáveis como sexo, grupo de tratamento, desfecho binário',
-    tests: ['Qui-Quadrado (χ²)', 'Teste Exato de Fisher', 'McNemar', 'Cochran Q']
+    tests: [
+      { label: 'Qui-Quadrado (χ²)', key: 'Teste Qui-Quadrado (χ²)' },
+      { label: 'Teste Exato de Fisher', key: 'Teste Exato de Fisher' },
+      { label: 'McNemar', key: 'Teste de McNemar' },
+      { label: 'Cochran Q', key: 'Teste de Cochran Q' },
+    ]
   },
   {
-    id: 'correlation', title: 'Correlação', icon: 'scatter_plot', color: 'accent',
+    id: 'correlation', title: 'Correlação', icon: 'scatter_plot', color: 'primary',
     desc: 'Mede a força e direção da relação entre duas variáveis',
-    tests: ['Pearson (r)', 'Spearman (ρ)', 'Tau de Kendall']
+    tests: [
+      { label: 'Pearson (r)', key: 'Correlação de Pearson' },
+      { label: 'Spearman (ρ)', key: 'Teste de Spearman' },
+    ]
   },
   {
     id: 'regression', title: 'Regressão', icon: 'trending_up', color: 'primary',
     desc: 'Modelos preditivos com effect size, CI e poder estatístico automáticos',
-    tests: ['Linear Simples', 'Linear Múltipla', 'Logística Binária']
+    tests: [
+      { label: 'Linear Simples', key: 'Regressão Linear Simples' },
+      { label: 'Linear Múltipla', key: 'Regressão Linear Múltipla' },
+      { label: 'Logística', key: 'Regressão Logística' },
+    ]
   },
   {
-    id: 'survival', title: 'Sobrevivência', icon: 'monitoring', color: 'accent',
+    id: 'survival', title: 'Sobrevivência', icon: 'timeline', color: 'primary',
     desc: 'Análise de tempo-até-evento — padrão ouro em oncologia e cardiologia',
-    tests: ['Kaplan-Meier', 'Modelo de Cox', 'Teste Log-Rank']
+    tests: [
+      { label: 'Kaplan-Meier', key: 'Análise de Sobrevivência (Kaplan-Meier)' },
+      { label: 'Modelo de Cox', key: 'Modelo de Cox (Riscos Proporcionais)' },
+      { label: 'Teste Log-Rank', key: 'Teste Log-Rank' },
+    ]
   },
 ]
 
 
-
-const STATISTICAL_TESTS = [
-  { name: 'Teste Qui-Quadrado (χ²)', icon: 'grid_4x4', desc: 'Associação entre variáveis categóricas', category: 'Categórico' },
-  { name: 'Teste Exato de Fisher', icon: 'precision_manufacturing', desc: 'Associação em tabelas 2x2 com amostras pequenas', category: 'Categórico' },
-  { name: 'Teste t de Student (pareado)', icon: 'compare_arrows', desc: 'Comparação de médias em grupos pareados', category: 'Paramétrico' },
-  { name: 'Teste t de Student (independente)', icon: 'compare', desc: 'Comparação de médias entre grupos independentes', category: 'Paramétrico' },
-  { name: 'ANOVA One-Way', icon: 'stacked_bar_chart', desc: 'Comparação de médias entre 3+ grupos', category: 'Paramétrico' },
-  { name: 'ANOVA Two-Way', icon: 'grid_on', desc: 'Análise fatorial com duas variáveis independentes', category: 'Paramétrico' },
-  { name: 'ANOVA com Medidas Repetidas', icon: 'repeat', desc: 'Mesmos sujeitos em múltiplas condições', category: 'Paramétrico' },
-  { name: 'Teste de Tukey (Post-hoc)', icon: 'tune', desc: 'Comparações múltiplas pós-ANOVA', category: 'Post-hoc' },
-  { name: 'Teste de Bonferroni', icon: 'shield', desc: 'Correção para comparações múltiplas', category: 'Post-hoc' },
-  { name: 'Teste de Kruskal-Wallis', icon: 'leaderboard', desc: 'Alternativa não-paramétrica à ANOVA', category: 'Não-Paramétrico' },
-  { name: 'Teste de Mann-Whitney U', icon: 'swap_horiz', desc: 'Comparação não-paramétrica entre 2 grupos', category: 'Não-Paramétrico' },
-  { name: 'Teste de Wilcoxon', icon: 'swap_vertical_circle', desc: 'Versão não-paramétrica do t-test pareado', category: 'Não-Paramétrico' },
-  { name: 'Teste de Friedman', icon: 'view_list', desc: 'ANOVA não-paramétrica com medidas repetidas', category: 'Não-Paramétrico' },
-  { name: 'Teste de Spearman', icon: 'trending_up', desc: 'Correlação não-paramétrica', category: 'Correlação' },
-  { name: 'Correlação de Pearson', icon: 'scatter_plot', desc: 'Correlação linear entre variáveis contínuas', category: 'Correlação' },
-  { name: 'Regressão Linear Simples', icon: 'show_chart', desc: 'Modelo preditivo com uma variável independente', category: 'Regressão' },
-  { name: 'Regressão Linear Múltipla', icon: 'stacked_line_chart', desc: 'Modelo preditivo com múltiplas variáveis', category: 'Regressão' },
-  { name: 'Regressão Logística', icon: 'functions', desc: 'Predição de variável dependente binária', category: 'Regressão' },
-  { name: 'Teste de Shapiro-Wilk', icon: 'water_drop', desc: 'Verificação de normalidade dos dados', category: 'Normalidade' },
-  { name: 'Teste de Kolmogorov-Smirnov', icon: 'waves', desc: 'Aderência à distribuição teórica', category: 'Normalidade' },
-  { name: 'Teste de Levene', icon: 'balance', desc: 'Homogeneidade de variâncias', category: 'Normalidade' },
-  { name: 'Análise de Sobrevivência (Kaplan-Meier)', icon: 'monitoring', desc: 'Estimativa de sobrevivência ao longo do tempo', category: 'Sobrevivência' },
-  { name: 'Modelo de Cox (Riscos Proporcionais)', icon: 'speed', desc: 'Regressão para dados de sobrevivência', category: 'Sobrevivência' },
-  { name: 'Teste Log-Rank', icon: 'equalizer', desc: 'Comparação de curvas de sobrevivência', category: 'Sobrevivência' },
-  { name: 'Metanálise (Efeito Fixo)', icon: 'hub', desc: 'Combinação de estudos com efeito fixo', category: 'Metanálise' },
-  { name: 'Metanálise (Efeito Aleatório)', icon: 'shuffle', desc: 'Combinação de estudos com efeito aleatório', category: 'Metanálise' },
-  { name: 'Funnel Plot / Viés de Publicação', icon: 'filter_alt', desc: 'Detecção de viés de publicação', category: 'Metanálise' },
-  { name: 'Cálculo de Poder Amostral', icon: 'bolt', desc: 'Determinação do tamanho amostral necessário', category: 'Poder' },
-  { name: 'Teste de McNemar', icon: 'toggle_on', desc: 'Comparação de proporções pareadas', category: 'Categórico' },
-  { name: 'Teste de Cochran Q', icon: 'checklist', desc: 'Extensão do McNemar para 3+ grupos', category: 'Categórico' },
-]
 
 // Helper: resolve the test-type category and return color tokens
 function getTestTypeBadge(testLabel) {
@@ -366,6 +360,7 @@ export default function Dashboard() {
   const [showOutcomeSelector, setShowOutcomeSelector] = useState(false)
   const [pendingFile, setPendingFile] = useState(null)
   const [testExplanationModal, setTestExplanationModal] = useState(null)
+  const [expandedCategory, setExpandedCategory] = useState(null)
   const fileInputRef = useRef(null)
   const premiumRef = useRef(null)
   // Passo 0.5 — revisão de domínios especializados (entre get-columns e OutcomeSelector)
@@ -401,7 +396,11 @@ export default function Dashboard() {
     const n = r.group_stats?.reduce((acc, g) => acc + (g.n || 0), 0) || r.n || ''
     const es = r.effect_size
     let esText = ''
-    if (es?.cohens_d != null)  esText = `, d = ${es.cohens_d}`
+    if (es?.hedges_g != null) esText = `, g = ${es.hedges_g}`
+    else if (es?.cohens_d != null)  esText = `, d = ${es.cohens_d}`
+    else if (es?.rank_biserial_r != null) esText = `, r = ${es.rank_biserial_r}`
+    else if (es?.partial_eta_squared != null) esText = `, η²p = ${es.partial_eta_squared}`
+    else if (es?.epsilon_squared != null) esText = `, ε² = ${es.epsilon_squared}`
     else if (es?.eta_squared != null) esText = `, η² = ${es.eta_squared}`
     else if (es?.r_squared != null)   esText = `, R² = ${es.r_squared}`
     else if (es?.cramers_v != null)   esText = `, V = ${es.cramers_v}`
@@ -434,7 +433,7 @@ export default function Dashboard() {
   const runPremiumAnalysis = async () => {
     if (!fileData) return
     setPremiumLoading(true)
-    const headers = { 'Authorization': `Bearer ${session?.sessionToken}` }
+    const headers = { 'Authorization': `Bearer ${session?.token}` }
     const API_URL = import.meta.env.VITE_API_BASE_URL
 
     try {
@@ -515,7 +514,7 @@ export default function Dashboard() {
     setBilateralWarnings([])
     setConfirmedTransformations([])
 
-    const headers = { 'Authorization': `Bearer ${session?.sessionToken}` }
+    const headers = { 'Authorization': `Bearer ${session?.token}` }
     const API_URL = import.meta.env.VITE_API_BASE_URL
 
     try {
@@ -695,7 +694,7 @@ export default function Dashboard() {
   }, [derivedCandidates, addDerivedCandidatesToColumns])
 
   const handleTeachDomain = useCallback(async (payload) => {
-    const headers = { 'Authorization': `Bearer ${session?.sessionToken}`, 'Content-Type': 'application/json' }
+    const headers = { 'Authorization': `Bearer ${session?.token}`, 'Content-Type': 'application/json' }
     const API_URL = import.meta.env.VITE_API_BASE_URL
     try {
       await fetch(`${API_URL}/api/domains/teach`, {
@@ -715,7 +714,7 @@ export default function Dashboard() {
     setShowOutcomeSelector(false)
     if (!pendingFile) return
 
-    const headers = { 'Authorization': `Bearer ${session?.sessionToken}` }
+    const headers = { 'Authorization': `Bearer ${session?.token}` }
     const API_URL = import.meta.env.VITE_API_BASE_URL
     setLoading(true)
 
@@ -828,7 +827,7 @@ export default function Dashboard() {
 
   const confirmProtocolAndRun = async () => {
     setLoading(true)
-    const headers = { 'Authorization': `Bearer ${session?.sessionToken}` }
+    const headers = { 'Authorization': `Bearer ${session?.token}` }
     const API_URL = import.meta.env.VITE_API_BASE_URL
 
     try {
@@ -908,7 +907,7 @@ export default function Dashboard() {
     const rows = sortedResults.map(r => {
       const es = r.effect_size || {}
       const ci = r.ci || {}
-      const esVal = es.cohens_d != null ? `d=${es.cohens_d}` : es.eta_squared != null ? `η²=${es.eta_squared}` : es.r_squared != null ? `R²=${es.r_squared}` : es.cramers_v != null ? `V=${es.cramers_v}` : '—'
+      const esVal = es.hedges_g != null ? `g=${es.hedges_g}` : es.cohens_d != null ? `d=${es.cohens_d}` : es.rank_biserial_r != null ? `r=${es.rank_biserial_r}` : es.partial_eta_squared != null ? `η²p=${es.partial_eta_squared}` : es.epsilon_squared != null ? `ε²=${es.epsilon_squared}` : es.eta_squared != null ? `η²=${es.eta_squared}` : es.r_squared != null ? `R²=${es.r_squared}` : es.cramers_v != null ? `V=${es.cramers_v}` : '—'
       return [
         r.testLabel || '',
         r.engine || '—',
@@ -1065,7 +1064,7 @@ export default function Dashboard() {
         <tbody>
           ${sortedResults.map(r => {
             const es = r.effect_size || {}
-            const esVal = es.cohens_d != null ? `d=${es.cohens_d}` : es.eta_squared != null ? `η²=${es.eta_squared}` : es.r_squared != null ? `R²=${es.r_squared}` : es.cramers_v != null ? `V=${es.cramers_v}` : '—'
+            const esVal = es.hedges_g != null ? `g=${es.hedges_g}` : es.cohens_d != null ? `d=${es.cohens_d}` : es.rank_biserial_r != null ? `r=${es.rank_biserial_r}` : es.partial_eta_squared != null ? `η²p=${es.partial_eta_squared}` : es.epsilon_squared != null ? `ε²=${es.epsilon_squared}` : es.eta_squared != null ? `η²=${es.eta_squared}` : es.r_squared != null ? `R²=${es.r_squared}` : es.cramers_v != null ? `V=${es.cramers_v}` : '—'
             const isSig = r.p_value != null && r.p_value < 0.05
             const pStr = r.p_value != null ? (r.p_value < 0.001 ? '<0.001' : r.p_value.toFixed(4)) : '—'
             return `<tr>
@@ -1191,74 +1190,89 @@ export default function Dashboard() {
                 </div>
             ) : !fileData ? (
               <>
-                <div className="relative mb-6">
-                  <motion.div 
-                    className="absolute inset-0 bg-primary/10 rounded-full blur-xl"
-                    animate={{ scale: [1, 1.2, 1], opacity: [0.3, 0.6, 0.3] }}
-                    transition={{ repeat: Infinity, duration: 3 }}
-                  />
-                  <motion.div 
-                    onClick={() => fileInputRef.current.click()} 
-                    className="cursor-pointer w-20 h-20 sm:w-28 sm:h-28 bg-gradient-to-br from-primary/10 to-primary/5 rounded-xl flex items-center justify-center text-primary relative border border-primary/20"
-                    whileHover={{ scale: 1.1, rotate: 3 }}
-                    whileTap={{ scale: 0.95 }}
-                    transition={{ type: "spring", stiffness: 400, damping: 17 }}
-                  >
-                    <motion.span 
-                      className="material-symbols-rounded text-4xl sm:text-6xl"
-                      animate={{ y: [0, -6, 0] }}
-                      transition={{ repeat: Infinity, duration: 2, ease: "easeInOut" }}
-                    >
-                      cloud_upload
-                    </motion.span>
-                    <motion.div 
-                      className="absolute -top-1 -right-1 w-6 h-6 bg-primary rounded-full flex items-center justify-center"
-                      animate={{ scale: [1, 1.2, 1] }}
-                      transition={{ repeat: Infinity, duration: 2 }}
-                    >
-                      <span className="material-symbols-rounded text-background text-sm">add</span>
-                    </motion.div>
-                  </motion.div>
-                </div>
-                <motion.h3 
-                  className="text-xl sm:text-2xl font-semibold text-text-main tracking-tight"
+                <motion.h3
+                  className="text-xl sm:text-2xl font-semibold text-text-main tracking-tight mb-2"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                >
+                  Bem-vindo ao Paper Metrics
+                </motion.h3>
+                <motion.p
+                  className="text-text-muted font-medium text-sm mb-8 px-4 max-w-md"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 0.1 }}
+                >
+                  Comece fazendo upload dos seus dados ou experimente com um dataset de exemplo.
+                </motion.p>
+
+                <motion.div
+                  className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full"
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.2 }}
                 >
-                  Envie seu arquivo
-                </motion.h3>
-                <motion.p 
-                  className="text-text-muted font-medium text-sm mt-3 px-4 max-w-sm"
+                  {/* Upload card */}
+                  <motion.button
+                    onClick={() => fileInputRef.current.click()}
+                    className="flex flex-col items-center gap-3 p-6 rounded-2xl bg-primary/5 border border-primary/20 hover:bg-primary/10 hover:border-primary/30 transition-all text-left group"
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                  >
+                    <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center text-primary group-hover:scale-110 transition-transform">
+                      <span className="material-symbols-rounded text-2xl">cloud_upload</span>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-sm font-semibold text-text-main">Fazer upload</p>
+                      <p className="text-[11px] text-text-muted mt-1">CSV ou Excel, ate 50MB</p>
+                    </div>
+                  </motion.button>
+
+                  {/* Sample data card */}
+                  <motion.button
+                    onClick={async () => {
+                      try {
+                        setLoading(true)
+                        const API_URL = import.meta.env.VITE_API_BASE_URL
+                        const headers = { 'Authorization': `Bearer ${session?.token}` }
+                        const res = await fetch(`${API_URL}/api/data/sample`, { headers })
+                        if (!res.ok) throw new Error('Erro ao carregar dados de exemplo')
+                        const data = await res.json()
+                        const blob = new Blob([data.csv_data], { type: 'text/csv' })
+                        const file = new File([blob], data.filename, { type: 'text/csv' })
+                        const dt = new DataTransfer()
+                        dt.items.add(file)
+                        fileInputRef.current.files = dt.files
+                        handleFileUpload({ target: { files: dt.files } })
+                      } catch (err) {
+                        alert('Erro ao carregar dados de exemplo: ' + err.message)
+                        setLoading(false)
+                      }
+                    }}
+                    className="flex flex-col items-center gap-3 p-6 rounded-2xl bg-surface border border-border-subtle hover:border-primary/20 hover:bg-primary/5 transition-all text-left group"
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                  >
+                    <div className="w-12 h-12 rounded-xl bg-surface border border-border-subtle flex items-center justify-center text-text-muted group-hover:text-primary group-hover:border-primary/20 transition-all">
+                      <span className="material-symbols-rounded text-2xl">science</span>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-sm font-semibold text-text-main">Dados de exemplo</p>
+                      <p className="text-[11px] text-text-muted mt-1">Dataset clinico com 50 pacientes</p>
+                    </div>
+                  </motion.button>
+                </motion.div>
+
+                <motion.div
+                  className="flex gap-3 mt-5"
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   transition={{ delay: 0.3 }}
                 >
-                  Arraste seus datasets (.csv, .xlsx) ou clique para upload.
-                </motion.p>
-                <motion.div 
-                  className="flex gap-3 mt-4"
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.4 }}
-                >
                   <span className="px-3 py-1.5 bg-primary/5 rounded-full text-[9px] font-semibold tracking-wide text-primary/70 border border-primary/10">CSV</span>
                   <span className="px-3 py-1.5 bg-primary/5 rounded-full text-[9px] font-semibold tracking-wide text-primary/70 border border-primary/10">XLSX</span>
-                  <span className="px-3 py-1.5 bg-surface rounded-full text-[9px] font-semibold tracking-wide text-text-muted border border-border-subtle">Máx 50MB</span>
+                  <span className="px-3 py-1.5 bg-surface rounded-full text-[9px] font-semibold tracking-wide text-text-muted border border-border-subtle">Arrastar e soltar</span>
                 </motion.div>
-                <motion.button 
-                  onClick={() => fileInputRef.current.click()} 
-                  className="mt-8 w-full bg-gradient-to-r from-primary/10 via-primary/5 to-primary/10 hover:from-primary/20 hover:via-primary/10 hover:to-primary/20 py-5 rounded-2xl font-semibold text-xs tracking-wide text-primary border border-primary/30 transition-all relative overflow-hidden group"
-                  whileHover={{ scale: 1.01 }}
-                  whileTap={{ scale: 0.99 }}
-                >
-                  <motion.div 
-                    className="absolute inset-0 bg-gradient-to-r from-transparent via-primary/10 to-transparent"
-                    animate={{ x: ['-100%', '100%'] }}
-                    transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
-                  />
-                  <span className="relative z-10">Selecionar Arquivo</span>
-                </motion.button>
               </>
             ) : (
               <div className="w-full text-left">
@@ -1549,7 +1563,11 @@ export default function Dashboard() {
                     /* ── Helper: format effect size into a single string ── */
                     const fmtEffect = (es) => {
                       if (!es) return null
+                      if (es.hedges_g != null) return { symbol: 'g', value: es.hedges_g }
                       if (es.cohens_d != null) return { symbol: 'd', value: es.cohens_d }
+                      if (es.rank_biserial_r != null) return { symbol: 'r', value: es.rank_biserial_r }
+                      if (es.partial_eta_squared != null) return { symbol: 'η²p', value: es.partial_eta_squared }
+                      if (es.epsilon_squared != null) return { symbol: 'ε²', value: es.epsilon_squared }
                       if (es.eta_squared != null) return { symbol: 'η²', value: es.eta_squared }
                       if (es.r_squared != null) return { symbol: 'R²', value: es.r_squared }
                       if (es.cramers_v != null) return { symbol: 'V', value: es.cramers_v }
@@ -1926,7 +1944,7 @@ export default function Dashboard() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-lg"
+            className="fixed inset-0 z-[100] flex items-center justify-center px-4 py-20 bg-black/50 backdrop-blur-sm overflow-y-auto"
             onClick={() => setTestExplanationModal(null)}
           >
             <motion.div
@@ -1935,75 +1953,66 @@ export default function Dashboard() {
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
               transition={{ type: "spring", stiffness: 300, damping: 25 }}
               onClick={e => e.stopPropagation()}
-              className="w-full max-w-md"
+              className="w-full max-w-md my-auto"
             >
               {(() => {
                 const exp = getExplanation(testExplanationModal)
                 if (!exp) return null
                 return (
-                  <div className="relative overflow-hidden rounded-xl border border-white/10 bg-gradient-to-br from-gray-900 via-gray-900 to-gray-800 shadow-2xl shadow-black/50">
-                    <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-teal-400 via-teal-500 to-cyan-500"></div>
-                    
+                  <div className="relative overflow-hidden rounded-2xl bg-background border border-border-subtle shadow-xl">
+                    <div className="absolute top-0 left-0 right-0 h-0.5 bg-primary/40"></div>
+
                     <div className="p-6 pb-4">
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-teal-400/20 to-teal-500/20 border border-teal-400/20 flex items-center justify-center">
-                          <span className="material-symbols-rounded text-teal-300 text-2xl">science</span>
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+                          <span className="material-symbols-rounded text-primary text-xl">science</span>
                         </div>
                         <div>
-                          <h3 className="text-lg font-semibold text-text-main">{exp.title}</h3>
-                          <p className="text-xs text-text-muted font-medium">Guia do Teste Estatístico</p>
+                          <h3 className="text-base font-semibold text-text-main">{exp.title}</h3>
+                          <p className="text-[10px] text-text-muted font-medium">Guia do Teste Estatístico</p>
                         </div>
                       </div>
                     </div>
 
-                    <div className="px-6 pb-6 space-y-4">
-                      <div className="p-4 rounded-2xl bg-surface border border-border-subtle">
+                    <div className="px-6 pb-6 space-y-3">
+                      <div className="p-4 rounded-xl bg-surface border border-border-subtle">
                         <div className="flex items-center gap-2 mb-2">
-                          <span className="w-5 h-5 rounded-lg bg-blue-500/20 flex items-center justify-center">
-                            <span className="material-symbols-rounded text-blue-400 text-xs">lightbulb</span>
-                          </span>
-                          <h4 className="text-xs font-bold text-blue-400 tracking-wider">O que é?</h4>
+                          <span className="material-symbols-rounded text-primary text-sm">lightbulb</span>
+                          <h4 className="text-[10px] font-bold text-primary tracking-wider uppercase">O que é?</h4>
                         </div>
-                        <p className="text-sm text-text-main leading-relaxed">{exp.what}</p>
+                        <p className="text-xs text-text-main leading-relaxed">{exp.what}</p>
                       </div>
 
-                      <div className="p-4 rounded-2xl bg-teal-400/5 border border-teal-400/10">
+                      <div className="p-4 rounded-xl bg-surface border border-border-subtle">
                         <div className="flex items-center gap-2 mb-2">
-                          <span className="w-5 h-5 rounded-lg bg-teal-400/20 flex items-center justify-center">
-                            <span className="material-symbols-rounded text-teal-300 text-xs">check_circle</span>
-                          </span>
-                          <h4 className="text-xs font-bold text-teal-300 tracking-wider">Quando usar</h4>
+                          <span className="material-symbols-rounded text-primary text-sm">check_circle</span>
+                          <h4 className="text-[10px] font-bold text-primary tracking-wider uppercase">Quando usar</h4>
                         </div>
-                        <p className="text-sm text-text-main leading-relaxed">{exp.when}</p>
+                        <p className="text-xs text-text-main leading-relaxed">{exp.when}</p>
                       </div>
 
-                      <div className="p-4 rounded-2xl bg-purple-500/5 border border-purple-500/10">
+                      <div className="p-4 rounded-xl bg-surface border border-border-subtle">
                         <div className="flex items-center gap-2 mb-2">
-                          <span className="w-5 h-5 rounded-lg bg-purple-500/20 flex items-center justify-center">
-                            <span className="material-symbols-rounded text-purple-400 text-xs">help</span>
-                          </span>
-                          <h4 className="text-xs font-bold text-purple-400 tracking-wider">Exemplo</h4>
+                          <span className="material-symbols-rounded text-primary text-sm">school</span>
+                          <h4 className="text-[10px] font-bold text-primary tracking-wider uppercase">Exemplo prático</h4>
                         </div>
-                        <p className="text-sm text-text-main leading-relaxed">{exp.example}</p>
+                        <p className="text-xs text-text-muted leading-relaxed italic">{exp.example}</p>
                       </div>
 
-                      <div className="p-4 rounded-2xl bg-amber-500/5 border border-amber-500/10">
+                      <div className="p-4 rounded-xl bg-primary/5 border border-primary/10">
                         <div className="flex items-center gap-2 mb-2">
-                          <span className="w-5 h-5 rounded-lg bg-amber-500/20 flex items-center justify-center">
-                            <span className="material-symbols-rounded text-amber-400 text-xs">info</span>
-                          </span>
-                          <h4 className="text-xs font-bold text-amber-400 tracking-wider">Pressupostos</h4>
+                          <span className="material-symbols-rounded text-primary text-sm">info</span>
+                          <h4 className="text-[10px] font-bold text-primary tracking-wider uppercase">Pressupostos</h4>
                         </div>
-                        <p className="text-sm text-text-muted leading-relaxed">{exp.assumption}</p>
+                        <p className="text-xs text-text-muted leading-relaxed">{exp.assumption}</p>
                       </div>
                     </div>
 
                     <div className="px-6 pb-6">
                       <button
                         onClick={() => setTestExplanationModal(null)}
-                        className="w-full py-3.5 bg-surface hover:bg-white/10 border border-white/10 text-text-main font-bold text-sm rounded-2xl transition-all flex items-center justify-center gap-2"
+                        className="w-full py-3 bg-primary hover:bg-primary/90 text-white font-semibold text-sm rounded-xl transition-all flex items-center justify-center gap-2"
                       >
-                        <span className="material-symbols-rounded text-lg">close</span>
                         Entendi!
                       </button>
                     </div>
@@ -2060,10 +2069,25 @@ export default function Dashboard() {
                   <div className="p-4 bg-surface rounded-xl border border-border-subtle">
                     <p className="text-[9px] font-bold text-text-muted mb-2"><StatTooltip term="effect_size">Tamanho do Efeito</StatTooltip></p>
                     <div className="space-y-1">
-                      {detailModal.effect_size.cohens_d != null && (
+                      {detailModal.effect_size.hedges_g != null && (
+                        <p className="text-xs text-text-main"><StatTooltip term="hedges_g">g de Hedges</StatTooltip>: <span className="font-bold text-text-main">{detailModal.effect_size.hedges_g}</span> ({detailModal.effect_size.interpretation})</p>
+                      )}
+                      {detailModal.effect_size.cohens_d != null && !detailModal.effect_size.hedges_g && (
                         <p className="text-xs text-text-main"><StatTooltip term="cohens_d">d de Cohen</StatTooltip>: <span className="font-bold text-text-main">{detailModal.effect_size.cohens_d}</span> ({detailModal.effect_size.interpretation})</p>
                       )}
-                      {detailModal.effect_size.eta_squared != null && (
+                      {detailModal.effect_size.rank_biserial_r != null && (
+                        <p className="text-xs text-text-main"><StatTooltip term="rank_biserial_r">r rank-biserial</StatTooltip>: <span className="font-bold text-text-main">{detailModal.effect_size.rank_biserial_r}</span> ({detailModal.effect_size.interpretation})</p>
+                      )}
+                      {detailModal.effect_size.cles != null && (
+                        <p className="text-xs text-text-muted"><StatTooltip term="cles">CLES</StatTooltip>: <span className="font-bold">{detailModal.effect_size.cles}</span> ({detailModal.effect_size.cles_interpretation})</p>
+                      )}
+                      {detailModal.effect_size.partial_eta_squared != null && (
+                        <p className="text-xs text-text-main"><StatTooltip term="partial_eta_squared">η² parcial</StatTooltip>: <span className="font-bold text-text-main">{detailModal.effect_size.partial_eta_squared}</span> ({detailModal.effect_size.interpretation})</p>
+                      )}
+                      {detailModal.effect_size.epsilon_squared != null && !detailModal.effect_size.eta_squared && (
+                        <p className="text-xs text-text-main"><StatTooltip term="epsilon_squared">ε²</StatTooltip>: <span className="font-bold text-text-main">{detailModal.effect_size.epsilon_squared}</span> ({detailModal.effect_size.interpretation})</p>
+                      )}
+                      {detailModal.effect_size.eta_squared != null && !detailModal.effect_size.partial_eta_squared && !detailModal.effect_size.epsilon_squared && (
                         <p className="text-xs text-text-main"><StatTooltip term="eta_squared">Eta²</StatTooltip>: <span className="font-bold text-text-main">{detailModal.effect_size.eta_squared}</span> ({detailModal.effect_size.interpretation})</p>
                       )}
                       {detailModal.effect_size.r_squared != null && (
@@ -2172,18 +2196,22 @@ export default function Dashboard() {
                 {detailModal.post_hoc && detailModal.post_hoc.comparisons && detailModal.post_hoc.comparisons.length > 0 && (
                   <div className="p-4 bg-surface rounded-xl border border-border-subtle">
                     <p className="text-[9px] font-bold text-text-muted mb-2"><StatTooltip term="post_hoc">Testes Post-Hoc ({detailModal.post_hoc.method})</StatTooltip></p>
-                    <p className="text-[9px] text-text-muted mb-2">α ajustado = {detailModal.post_hoc.alpha_adjustado} ({detailModal.post_hoc.n_comparisons} comparações)</p>
+                    <p className="text-[9px] text-text-muted mb-2">{detailModal.post_hoc.n_comparisons} comparações</p>
                     <div className="space-y-1">
-                      {detailModal.post_hoc.comparisons.map((c, ci) => (
+                      {detailModal.post_hoc.comparisons.map((c, ci) => {
+                        const pVal = c.p_value_holm ?? c.p_value_bonferroni ?? c.p_value
+                        const esVal = c.hedges_g != null ? `g=${c.hedges_g}` : c.cohens_d != null ? `d=${c.cohens_d}` : c.rank_biserial_r != null ? `r=${c.rank_biserial_r}` : null
+                        return (
                         <div key={ci} className={`flex items-center justify-between text-xs p-2 rounded-lg ${c.significant ? 'bg-primary/10 border border-primary/20' : 'bg-white/3'}`}>
                           <span className="text-text-main font-medium">{c.comparison}</span>
                           <div className="flex items-center gap-3">
-                            <span className="font-mono text-text-muted">p={c.p_value_bonferroni < 0.001 ? '<0.001' : c.p_value_bonferroni.toFixed(4)}</span>
-                            {c.cohens_d != null && <span className="text-[9px] text-text-muted">d={c.cohens_d}</span>}
+                            <span className="font-mono text-text-muted">p={pVal != null ? (pVal < 0.001 ? '<0.001' : pVal.toFixed(4)) : '—'}</span>
+                            {esVal && <span className="text-[9px] text-text-muted">{esVal}</span>}
                             <span className={`text-[10px] font-semibold ${c.significant ? 'text-primary' : 'text-text-muted'}`}>{c.significant ? '✦ SIG' : 'ns'}</span>
                           </div>
                         </div>
-                      ))}
+                        )
+                      })}
                     </div>
                   </div>
                 )}
@@ -2345,7 +2373,7 @@ export default function Dashboard() {
               {[
                 { label: 'Análises Realizadas', value: history.length || 0, icon: 'analytics', color: 'primary', sub: history.length === 1 ? '1 arquivo processado' : `${history.length} arquivos processados` },
                 { label: 'Ensaios Clínicos', value: trials.length || 0, icon: 'biotech', color: 'accent', sub: 'cadastrados na plataforma' },
-                { label: 'Testes Disponíveis', value: STATISTICAL_TESTS.length, icon: 'model_training', color: 'primary', sub: 'métodos estatísticos' },
+                { label: 'Testes Disponíveis', value: Object.keys(TEST_EXPLANATIONS).length, icon: 'model_training', color: 'primary', sub: 'métodos estatísticos' },
                 { label: 'Engine', value: 'Pingouin', icon: 'memory', color: 'accent', sub: 'scipy fallback integrado' },
               ].map((stat, i) => (
                 <motion.div
@@ -2383,95 +2411,89 @@ export default function Dashboard() {
               <p className="text-text-muted text-xs mt-1 font-medium">Faça upload de um arquivo para o sistema detectar e executar automaticamente os testes mais adequados</p>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {ANALYSIS_CATEGORIES.map((cat, ci) => (
-                <motion.div
-                  key={cat.id}
-                  initial={{ opacity: 0, y: 16 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  viewport={{ once: true }}
-                  transition={{ delay: ci * 0.07 }}
-                  whileHover={{ y: -4, scale: 1.01 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={() => setTestExplanationModal(cat.tests[0])}
-                  className="glass-card rounded-2xl p-5 border border-border-subtle hover:border-primary/20 transition-all group cursor-pointer"
-                >
-                  <div className="absolute top-3 right-3 w-5 h-5 rounded-full bg-surface group-hover:bg-primary/10 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all">
-                    <span className="material-symbols-rounded text-[10px] text-primary">info</span>
-                  </div>
-                  <div className="flex items-center gap-3 mb-3">
-                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
-                      cat.color === 'primary' ? 'bg-primary/10 text-primary group-hover:bg-primary/20' : 'bg-accent/10 text-accent group-hover:bg-accent/20'
-                    } transition-colors`}>
-                      <span className="material-symbols-rounded text-sm">{cat.icon}</span>
-                    </div>
-                    <div>
-                      <p className="text-xs font-semibold text-text-main group-hover:text-primary transition-colors">{cat.title}</p>
-                    </div>
-                  </div>
-                  <p className="text-[10px] text-text-muted leading-relaxed mb-3">{cat.desc}</p>
-                  <div className="flex flex-wrap gap-1">
-                    {cat.tests.map(t => (
-                      <span key={t} className="text-[9px] px-2 py-0.5 bg-surface border border-border-subtle rounded-full text-text-muted font-medium">{t}</span>
-                    ))}
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-          </motion.section>
-
-          <motion.section 
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            className="mt-8"
-          >
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h2 className="text-xl font-semibold text-text-main flex items-center gap-3">
-                  <span className="material-symbols-rounded text-primary">model_training</span>
-                  Análises Estatísticas Disponíveis
-                </h2>
-                <p className="text-text-muted text-xs mt-1 font-medium">Todas as opções de testes e modelos estatísticos suportados pela plataforma</p>
-              </div>
-            </div>
-
-            {['Paramétrico', 'Não-Paramétrico', 'Categórico', 'Correlação', 'Regressão', 'Normalidade', 'Sobrevivência', 'Metanálise', 'Post-hoc', 'Poder'].map((category) => (
-              <div key={category} className="mb-6">
-                <h3 className="text-[10px] font-semibold tracking-wide text-primary mb-3 flex items-center gap-2">
-                  <span className="w-2 h-2 bg-primary rounded-full"></span>
-                  {category}
-                </h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {STATISTICAL_TESTS.filter(t => t.category === category).map((test, i) => (
-                    <motion.div
-                      key={test.name}
-                      initial={{ opacity: 0, y: 10 }}
-                      whileInView={{ opacity: 1, y: 0 }}
-                      viewport={{ once: true }}
-                      transition={{ delay: i * 0.05 }}
-                      whileHover={{ y: -2, scale: 1.01 }}
-                      whileTap={{ scale: 0.98 }}
-                      onClick={() => setTestExplanationModal(test.name)}
-                      className="glass-card rounded-2xl p-4 cursor-pointer group hover:border-primary/20 transition-all analysis-grid-item relative"
+              {ANALYSIS_CATEGORIES.map((cat, ci) => {
+                const isExpanded = expandedCategory === cat.id
+                return (
+                  <motion.div
+                    key={cat.id}
+                    initial={{ opacity: 0, y: 16 }}
+                    whileInView={{ opacity: 1, y: 0 }}
+                    viewport={{ once: true }}
+                    transition={{ delay: ci * 0.07 }}
+                    layout
+                    className={`glass-card rounded-2xl border transition-all cursor-pointer ${
+                      isExpanded ? 'border-primary/30 col-span-1 md:col-span-2 lg:col-span-3' : 'border-border-subtle hover:border-primary/20'
+                    }`}
+                  >
+                    <div
+                      className="p-5 group"
+                      onClick={() => setExpandedCategory(isExpanded ? null : cat.id)}
                     >
-                      <div className="absolute top-2 right-2 w-5 h-5 rounded-full bg-surface group-hover:bg-primary/10 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all">
-                        <span className="material-symbols-rounded text-[10px] text-primary">info</span>
-                      </div>
-                      <div className="flex items-start gap-3">
-                        <div className="w-9 h-9 rounded-xl bg-primary/5 flex items-center justify-center text-primary/70 group-hover:text-primary group-hover:bg-primary/10 transition-all shrink-0">
-                          <span className="material-symbols-rounded text-sm">{test.icon}</span>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-primary/10 text-primary group-hover:bg-primary/20 transition-colors">
+                            <span className="material-symbols-rounded text-sm">{cat.icon}</span>
+                          </div>
+                          <div>
+                            <p className="text-xs font-semibold text-text-main group-hover:text-primary transition-colors">{cat.title}</p>
+                            <p className="text-[10px] text-text-muted leading-relaxed mt-0.5">{cat.desc}</p>
+                          </div>
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-bold text-text-main group-hover:text-primary transition-colors truncate">{test.name}</p>
-                          <p className="text-[10px] text-text-muted mt-0.5 leading-relaxed line-clamp-2">{test.desc}</p>
-                        </div>
+                        <motion.span
+                          animate={{ rotate: isExpanded ? 180 : 0 }}
+                          transition={{ duration: 0.2 }}
+                          className="material-symbols-rounded text-sm text-text-muted"
+                        >
+                          expand_more
+                        </motion.span>
                       </div>
-                    </motion.div>
-                  ))}
-                </div>
-              </div>
-            ))}
+                      {!isExpanded && (
+                        <div className="flex flex-wrap gap-1 mt-3">
+                          {cat.tests.map(t => (
+                            <span key={t.key} className="text-[9px] px-2 py-0.5 bg-surface border border-border-subtle rounded-full text-text-muted font-medium">{t.label}</span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <AnimatePresence>
+                      {isExpanded && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          transition={{ duration: 0.25, ease: 'easeInOut' }}
+                          className="overflow-hidden"
+                        >
+                          <div className="px-5 pb-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                            {cat.tests.map((t, ti) => (
+                              <motion.button
+                                key={t.key}
+                                initial={{ opacity: 0, y: 8 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: ti * 0.05 }}
+                                onClick={(e) => { e.stopPropagation(); setTestExplanationModal(t.key) }}
+                                className="flex items-center gap-3 p-3 rounded-xl bg-surface border border-border-subtle hover:border-primary/30 hover:bg-primary/5 transition-all text-left group/test"
+                              >
+                                <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0 group-hover/test:bg-primary/20 transition-colors">
+                                  <span className="material-symbols-rounded text-primary text-xs">science</span>
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="text-[11px] font-semibold text-text-main group-hover/test:text-primary transition-colors truncate">{t.label}</p>
+                                  <p className="text-[9px] text-text-muted mt-0.5">Clique para ver o guia</p>
+                                </div>
+                              </motion.button>
+                            ))}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </motion.div>
+                )
+              })}
+            </div>
           </motion.section>
+
         </>
       )}
     </div>

@@ -14,7 +14,7 @@ export default function AttachmentUploader({ projectId, onPreview }) {
   const fetchAttachments = useCallback(async () => {
     try {
       const res = await fetch(`${API_URL}/api/projects/${projectId}/attachments`, {
-        headers: { 'Authorization': `Bearer ${session?.sessionToken}` }
+        headers: { 'Authorization': `Bearer ${session?.token}` }
       })
       if (res.ok) {
         setAttachments(await res.json())
@@ -70,7 +70,7 @@ export default function AttachmentUploader({ projectId, onPreview }) {
       try {
         const res = await fetch(`${API_URL}/api/projects/${projectId}/attachments/chunk`, {
             method: 'POST',
-            headers: { 'Authorization': `Bearer ${session.sessionToken}` },
+            headers: { 'Authorization': `Bearer ${session.token}` },
             body: formData
         });
         
@@ -116,7 +116,7 @@ export default function AttachmentUploader({ projectId, onPreview }) {
       // We use XMLHttpRequest here to be able to track progress
       const xhr = new XMLHttpRequest()
       xhr.open('POST', `${API_URL}/api/projects/${projectId}/attachments`)
-      xhr.setRequestHeader('Authorization', `Bearer ${session.sessionToken}`)
+      xhr.setRequestHeader('Authorization', `Bearer ${session.token}`)
 
       xhr.upload.onprogress = (event) => {
         if (event.lengthComputable) {
@@ -151,7 +151,7 @@ export default function AttachmentUploader({ projectId, onPreview }) {
     try {
       const res = await fetch(`${API_URL}/api/projects/${projectId}/attachments/${id}`, {
         method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${session.sessionToken}` }
+        headers: { 'Authorization': `Bearer ${session.token}` }
       })
       if (res.ok) fetchAttachments()
     } catch (err) {
@@ -250,7 +250,7 @@ export default function AttachmentUploader({ projectId, onPreview }) {
                     <span className="material-symbols-rounded text-[18px]">visibility</span>
                   </button>
                   <a 
-                    href={`${API_URL}/api/attachments/${att.id}/file?token=${session?.sessionToken}`}
+                    href={`${API_URL}/api/attachments/${att.id}/file?token=${session?.token}`}
                     className="p-2 text-zinc-400 hover:text-primary hover:bg-white/10 rounded-lg transition-colors"
                     title="Baixar"
                     download

@@ -41,7 +41,7 @@ export default function ClinicalTrials() {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session?.sessionToken}`
+            'Authorization': `Bearer ${session?.token}`
           },
           body: JSON.stringify({
             title: trial.name || trial.title || 'Novo Estudo',

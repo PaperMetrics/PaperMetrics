@@ -209,7 +209,7 @@ export default function ResearchAssistant({ isOpen, setIsOpen }) {
       const API_URL = import.meta.env.VITE_API_BASE_URL
       const response = await fetch(`${API_URL}/api/ai/chat`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${session?.sessionToken}` },
+        headers: { 'Authorization': `Bearer ${session?.token}` },
         body: formData
       })
 

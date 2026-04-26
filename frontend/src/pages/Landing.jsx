@@ -10,92 +10,97 @@ function ForestPlot({ className }) {
   )
 }
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000'
+
 const features = [
   {
-    title: 'Análise automática por IA',
-    description: 'Nossa IA detecta automaticamente os tipos de variáveis e sugere os testes estatísticos mais adequados para sua pesquisa.',
+    title: 'Analise automatica por IA',
+    description: 'Nossa IA detecta automaticamente os tipos de variaveis e sugere os testes estatisticos mais adequados para sua pesquisa.',
     icon: 'psychology'
   },
   {
-    title: 'Motor estatístico profissional',
-    description: 'Powered by Pingouin — o mesmo utilizado em artigos científicos de alto impacto. Precisão clínica garantida.',
+    title: 'Motor estatistico profissional',
+    description: 'Powered by Pingouin, SciPy e Statsmodels — as mesmas bibliotecas utilizadas em artigos cientificos de alto impacto.',
     icon: 'analytics'
   },
   {
-    title: 'Interpretação em português',
-    description: 'Resultados interpretados automaticamente em português claro. Sem jargon estatístico complexo.',
+    title: 'Interpretacao em portugues',
+    description: 'Resultados interpretados automaticamente em portugues claro. Sem jargon estatistico complexo.',
     icon: 'translate'
   },
   {
-    title: 'Gráficos interativos',
-    description: 'Visualize seus dados com gráficos exportáveis para PowerPoint, PDF e Excel.',
+    title: 'Graficos interativos',
+    description: 'Visualize seus dados com graficos exportaveis para PowerPoint, PDF e Excel.',
     icon: 'show_chart'
   },
   {
-    title: 'Análise de sobrevivência',
-    description: 'Kaplan-Meier, Log-Rank e Modelo de Cox integrados para suas pesquisas com dados de tempo.',
+    title: 'Analise de sobrevivencia',
+    description: 'Kaplan-Meier, Log-Rank e Modelo de Cox integrados para pesquisas com dados de tempo.',
     icon: 'timeline'
   },
   {
-    title: 'Metanálise completa',
-    description: 'Combinação de estudos com modelos de efeito fixo e aleatório. Detecção de viés de publicação.',
+    title: 'Metanalise completa',
+    description: 'Combinacao de estudos com modelos de efeito fixo e aleatorio. Deteccao de vies de publicacao.',
     icon: 'hub'
-  }
-]
-
-const plans = [
-  {
-    name: 'Explorador',
-    price: 'Grátis',
-    period: '',
-    description: 'Perfeito para começar sua jornada',
-    features: ['Análises básicas', 'Até 5 variáveis', 'Gráficos básicos', 'Exportação CSV'],
-    cta: 'Começar grátis',
-    highlighted: false
-  },
-  {
-    name: 'Pesquisador',
-    price: 'R$ 29',
-    period: '/mês',
-    description: 'Para pesquisadores focados',
-    features: ['Análises ilimitadas', 'Até 50 variáveis', 'Gráficos avançados', 'Exportação completa', 'Análise de sobrevivência', 'Metanálise básica'],
-    cta: 'Assinar agora',
-    highlighted: true
-  },
-  {
-    name: 'Academia',
-    price: 'R$ 79',
-    period: '/mês',
-    description: 'Para laboratórios e orientadores',
-    features: ['Tudo do Pesquisador', 'Variáveis ilimitadas', 'Metanálise completa', 'Relatórios APA', 'Suporte prioritário', 'API de integração'],
-    cta: 'Falar com vendas',
-    highlighted: false
   }
 ]
 
 const faqs = [
   { q: 'Quais tipos de arquivo posso enviar?', a: 'Aceitamos CSV, Excel (.xlsx) e Google Sheets. O sistema detecta automaticamente o formato dos dados.' },
-  { q: 'Preciso saber estatística para usar?', a: 'Não! Nossa IA sugere automaticamente o teste mais adequado e interpreta os resultados em português claro.' },
-  { q: 'Os resultados são válidos para publicação?', a: 'Sim. Utilizamos o Pingouin, biblioteca estatística validada cientificamente. Os resultados seguem o padrão APA-7.' },
-  { q: 'Posso usar para TCC e doutorado?', a: 'Absolutamente. Muitos estudantes de mestrado e doutorado usam o Paper Metrics para análises de dissertações e teses.' },
-  { q: 'Tem análise de sobrevivência?', a: 'Sim! Inclui Kaplan-Meier, Log-Rank e Modelo de Cox para suas pesquisas com dados de tempo até evento.' }
-]
-
-const testimonials = [
-  { name: 'Dra. Camila Santos', role: 'Residente de Clínica Médica - USP', quote: 'O Paper Metrics salvou minha residência. Consegui fazer todas as análises do meu TCC em minutos, não semanas.', avatar: 'CS' },
-  { name: 'Prof. Ricardo Almeida', role: 'Orientador - UNIFESP', quote: 'Recomendo para todos os meus orientandos. A interpretação em português facilita muito o entendimento dos resultados.', avatar: 'RA' },
-  { name: 'Dr. Lucas Oliveira', role: 'Pós-doutorando - Einstein', quote: 'A análise de sobrevivência é excelente. Usei para meu projeto de pesquisa e os resultados foram exatamente os esperados.', avatar: 'LO' }
+  { q: 'Preciso saber estatistica para usar?', a: 'Nao! Nossa IA sugere automaticamente o teste mais adequado e interpreta os resultados em portugues claro.' },
+  { q: 'Os resultados sao validos para publicacao?', a: 'Sim. Utilizamos Pingouin, SciPy e Statsmodels — bibliotecas estatisticas validadas cientificamente. Os resultados seguem o padrao APA-7.' },
+  { q: 'Posso usar para TCC e doutorado?', a: 'Absolutamente. O Paper Metrics e ideal para analises de dissertacoes, teses e artigos cientificos.' },
+  { q: 'Quanto custa?', a: 'Estamos em fase de acesso antecipado gratuito. Solicite seu acesso e use todas as funcionalidades sem custo.' }
 ]
 
 export default function Landing() {
   const [openFaq, setOpenFaq] = useState(null)
   const [mounted, setMounted] = useState(false)
   const [mobileMenu, setMobileMenu] = useState(false)
+  const [waitlistEmail, setWaitlistEmail] = useState('')
+  const [waitlistName, setWaitlistName] = useState('')
+  const [waitlistInstitution, setWaitlistInstitution] = useState('')
+  const [waitlistStatus, setWaitlistStatus] = useState(null) // null | 'loading' | 'success' | 'error'
+  const [waitlistMessage, setWaitlistMessage] = useState('')
 
   useEffect(() => { setMounted(true) }, [])
 
   const toggleFaq = (index) => {
     setOpenFaq(openFaq === index ? null : index)
+  }
+
+  const handleWaitlist = async (e) => {
+    e.preventDefault()
+    if (!waitlistEmail.trim()) return
+    setWaitlistStatus('loading')
+    try {
+      const res = await fetch(`${API_BASE}/api/waitlist`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: waitlistEmail.trim(),
+          name: waitlistName.trim() || null,
+          institution: waitlistInstitution.trim() || null
+        })
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setWaitlistStatus('success')
+        setWaitlistMessage(data.message || 'Recebemos seu pedido!')
+      } else {
+        setWaitlistStatus('error')
+        setWaitlistMessage(data.detail || 'Erro ao enviar. Tente novamente.')
+      }
+    } catch {
+      setWaitlistStatus('error')
+      setWaitlistMessage('Erro de conexao. Tente novamente.')
+    }
+  }
+
+  const scrollToAccess = (e) => {
+    e.preventDefault()
+    setMobileMenu(false)
+    document.getElementById('acesso')?.scrollIntoView({ behavior: 'smooth' })
   }
 
   return (
@@ -112,13 +117,13 @@ export default function Landing() {
             <div className="hidden md:flex items-center gap-8">
               <a href="#recursos" className="text-[#a8a29e] hover:text-[#e7e5e4] transition-colors text-sm font-medium">Recursos</a>
               <a href="#como-funciona" className="text-[#a8a29e] hover:text-[#e7e5e4] transition-colors text-sm font-medium">Como funciona</a>
-              <a href="#planos" className="text-[#a8a29e] hover:text-[#e7e5e4] transition-colors text-sm font-medium">Planos</a>
+              <a href="#acesso" className="text-[#a8a29e] hover:text-[#e7e5e4] transition-colors text-sm font-medium">Acesso</a>
               <a href="#faq" className="text-[#a8a29e] hover:text-[#e7e5e4] transition-colors text-sm font-medium">FAQ</a>
             </div>
             <div className="flex items-center gap-3">
               <a href="/login" className="hidden sm:block px-4 py-2 text-sm font-medium text-[#a8a29e] hover:text-[#e7e5e4] transition-colors">Entrar</a>
-              <a href="/login" className="px-4 sm:px-5 py-2 bg-[#5eead4] hover:bg-[#99f6e4] text-[#134e4a] font-semibold text-sm rounded-lg transition-all">
-                Começar grátis
+              <a href="#acesso" onClick={scrollToAccess} className="px-4 sm:px-5 py-2 bg-[#5eead4] hover:bg-[#99f6e4] text-[#134e4a] font-semibold text-sm rounded-lg transition-all">
+                Solicitar acesso
               </a>
               <button
                 onClick={() => setMobileMenu(!mobileMenu)}
@@ -141,7 +146,7 @@ export default function Landing() {
                 <div className="flex flex-col gap-1 p-4">
                   <a href="#recursos" onClick={() => setMobileMenu(false)} className="px-4 py-3 text-[#a8a29e] hover:text-[#e7e5e4] hover:bg-[#111110] rounded-lg transition-colors text-sm font-medium">Recursos</a>
                   <a href="#como-funciona" onClick={() => setMobileMenu(false)} className="px-4 py-3 text-[#a8a29e] hover:text-[#e7e5e4] hover:bg-[#111110] rounded-lg transition-colors text-sm font-medium">Como funciona</a>
-                  <a href="#planos" onClick={() => setMobileMenu(false)} className="px-4 py-3 text-[#a8a29e] hover:text-[#e7e5e4] hover:bg-[#111110] rounded-lg transition-colors text-sm font-medium">Planos</a>
+                  <a href="#acesso" onClick={scrollToAccess} className="px-4 py-3 text-[#a8a29e] hover:text-[#e7e5e4] hover:bg-[#111110] rounded-lg transition-colors text-sm font-medium">Acesso</a>
                   <a href="#faq" onClick={() => setMobileMenu(false)} className="px-4 py-3 text-[#a8a29e] hover:text-[#e7e5e4] hover:bg-[#111110] rounded-lg transition-colors text-sm font-medium">FAQ</a>
                   <a href="/login" onClick={() => setMobileMenu(false)} className="px-4 py-3 text-[#5eead4] hover:bg-[#111110] rounded-lg transition-colors text-sm font-medium">Entrar</a>
                 </div>
@@ -162,7 +167,7 @@ export default function Landing() {
               className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[#5eead4]/10 border border-[#5eead4]/20 text-[#5eead4] text-sm font-medium mb-8"
             >
               <span className="w-2 h-2 rounded-full bg-[#5eead4] animate-pulse" />
-              Agora com análise de sobrevivência
+              Early access gratuito
             </motion.div>
 
             <motion.h1
@@ -171,9 +176,9 @@ export default function Landing() {
               transition={{ duration: 0.6, delay: 0.1 }}
               className="text-3xl sm:text-5xl md:text-7xl font-semibold tracking-[-1.5px] mb-6 leading-[1.05]"
             >
-              Análise estatística
+              Analise estatistica
               <br />
-              <span className="text-[#5eead4]">sem complicação</span>
+              <span className="text-[#5eead4]">sem complicacao</span>
             </motion.h1>
 
             <motion.p
@@ -182,7 +187,7 @@ export default function Landing() {
               transition={{ duration: 0.6, delay: 0.2 }}
               className="text-lg text-[#a8a29e] mb-10 max-w-2xl mx-auto leading-relaxed"
             >
-              O motor estatístico inteligente para pesquisadores. Faça upload dos seus dados e receba análises completas com interpretação em português — pronto para publicação.
+              O motor estatistico inteligente para pesquisadores. Faca upload dos seus dados e receba analises completas com interpretacao em portugues — pronto para publicacao.
             </motion.p>
 
             <motion.div
@@ -191,8 +196,8 @@ export default function Landing() {
               transition={{ duration: 0.6, delay: 0.3 }}
               className="flex flex-col sm:flex-row items-center justify-center gap-4"
             >
-              <a href="/login" className="w-full sm:w-auto px-8 py-3.5 bg-[#5eead4] hover:bg-[#99f6e4] text-[#134e4a] font-semibold text-base rounded-lg transition-all">
-                Começar análise grátis
+              <a href="#acesso" onClick={scrollToAccess} className="w-full sm:w-auto px-8 py-3.5 bg-[#5eead4] hover:bg-[#99f6e4] text-[#134e4a] font-semibold text-base rounded-lg transition-all">
+                Solicitar acesso gratuito
               </a>
               <a href="#como-funciona" className="w-full sm:w-auto px-8 py-3.5 border border-[#292524] hover:border-[#57534e] text-[#a8a29e] font-medium text-base rounded-lg transition-all hover:bg-[#111110]">
                 Ver como funciona
@@ -203,13 +208,13 @@ export default function Landing() {
               initial={{ opacity: 0 }}
               animate={mounted ? { opacity: 1 } : {}}
               transition={{ duration: 0.6, delay: 0.4 }}
-              className="mt-6 text-sm text-[#57534e]"
+              className="mt-6 text-sm text-[#78716c]"
             >
-              Não precisa de cartão de crédito · Análise básica gratuita
+              Gratuito durante o early access · Sem cartao de credito
             </motion.p>
           </div>
 
-          {/* Hero Preview */}
+          {/* Hero Preview — Mockup de resultado real */}
           <motion.div
             initial={{ opacity: 0, y: 40 }}
             animate={mounted ? { opacity: 1, y: 0 } : {}}
@@ -218,19 +223,32 @@ export default function Landing() {
           >
             <div className="rounded-xl overflow-hidden border border-[#292524] bg-[#111110]">
               <div className="p-4 border-b border-[#292524] flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-[#57534e]/50" />
-                <div className="w-3 h-3 rounded-full bg-[#57534e]/50" />
-                <div className="w-3 h-3 rounded-full bg-[#57534e]/50" />
-                <span className="ml-4 text-xs text-[#57534e]" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>Paper Metrics Dashboard</span>
+                <div className="w-3 h-3 rounded-full bg-[#292524]" />
+                <div className="w-3 h-3 rounded-full bg-[#292524]" />
+                <div className="w-3 h-3 rounded-full bg-[#292524]" />
+                <span className="ml-4 text-xs text-[#78716c]" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>Paper Metrics — Resultados</span>
               </div>
-              <div className="p-6 min-h-[300px] flex items-center justify-center">
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 w-full max-w-2xl">
-                  {[1, 2, 3, 4, 5, 6].map((i) => (
-                    <div key={i} className="h-24 rounded-lg bg-[#0a0a09] border border-[#292524] flex items-center justify-center">
-                      <span className="material-symbols-rounded text-3xl text-[#5eead4]/20">analytics</span>
+              <div className="p-6 space-y-4">
+                {[
+                  { icon: 'check_circle', color: '#5eead4', title: 'Teste T independente', detail: 't(48) = 2.847, p = 0.006, d = 0.81 — Significativo, efeito grande' },
+                  { icon: 'check_circle', color: '#5eead4', title: 'ANOVA one-way', detail: 'F(2, 87) = 5.12, p = 0.008, \u03B7\u00B2 = 0.105 — Significativo' },
+                  { icon: 'info', color: '#a8a29e', title: 'Correlacao de Pearson', detail: 'r = 0.34, p = 0.041, IC 95% [0.02, 0.61] — Correlacao fraca' },
+                  { icon: 'check_circle', color: '#5eead4', title: 'Qui-Quadrado', detail: '\u03C7\u00B2(1) = 6.24, p = 0.012, V = 0.35 — Associacao moderada' },
+                ].map((item, i) => (
+                  <motion.div
+                    key={i}
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={mounted ? { opacity: 1, x: 0 } : {}}
+                    transition={{ delay: 0.7 + i * 0.15 }}
+                    className="flex items-start gap-3 p-3 rounded-lg bg-[#0a0a09]/50"
+                  >
+                    <span className="material-symbols-rounded text-lg mt-0.5" style={{ color: item.color }}>{item.icon}</span>
+                    <div>
+                      <div className="text-sm font-medium text-[#e7e5e4]">{item.title}</div>
+                      <div className="text-xs text-[#a8a29e] mt-0.5" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{item.detail}</div>
                     </div>
-                  ))}
-                </div>
+                  </motion.div>
+                ))}
               </div>
             </div>
           </motion.div>
@@ -241,14 +259,14 @@ export default function Landing() {
       <section id="como-funciona" className="py-24 bg-[#111110]/50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-[42px] font-semibold tracking-[-1px] mb-4">Três passos simples</h2>
-            <p className="text-[#a8a29e] max-w-xl mx-auto">Da inscrição à aprovação, sem complicação.</p>
+            <h2 className="text-3xl md:text-[42px] font-semibold tracking-[-1px] mb-4">Tres passos simples</h2>
+            <p className="text-[#a8a29e] max-w-xl mx-auto">Da inscricao a publicacao, sem complicacao.</p>
           </div>
           <div className="grid md:grid-cols-3 gap-6">
             {[
-              { step: '01', title: 'Conecte', description: 'Faça upload do seu arquivo CSV ou Excel. O sistema detecta automaticamente o formato dos dados.' },
-              { step: '02', title: 'Analise', description: 'Nossa IA processa seus dados, detecta variáveis e executa os testes estatísticos mais adequados.' },
-              { step: '03', title: 'Conquiste', description: 'Receba resultados completos com interpretação em português e exporte para seu artigo.' }
+              { step: '01', title: 'Conecte', description: 'Faca upload do seu arquivo CSV ou Excel. O sistema detecta automaticamente o formato dos dados.' },
+              { step: '02', title: 'Analise', description: 'Nossa IA processa seus dados, detecta variaveis e executa os testes estatisticos mais adequados.' },
+              { step: '03', title: 'Publique', description: 'Receba resultados completos com interpretacao em portugues e exporte para seu artigo.' }
             ].map((item, i) => (
               <motion.div
                 key={i}
@@ -271,8 +289,8 @@ export default function Landing() {
       <section id="recursos" className="py-24">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-[42px] font-semibold tracking-[-1px] mb-4">Tudo que você precisa</h2>
-            <p className="text-[#a8a29e] max-w-xl mx-auto">Ferramentas profissionais para elevar a qualidade das suas análises.</p>
+            <h2 className="text-3xl md:text-[42px] font-semibold tracking-[-1px] mb-4">Tudo que voce precisa</h2>
+            <p className="text-[#a8a29e] max-w-xl mx-auto">Ferramentas profissionais para elevar a qualidade das suas analises.</p>
           </div>
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
             {features.map((feature, i) => (
@@ -295,106 +313,74 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* Stats */}
-      <section className="py-16 border-y border-[#292524]">
+      {/* Early Access */}
+      <section id="acesso" className="py-24 border-y border-[#292524]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
-            {[
-              { number: '50K+', label: 'Análises realizadas' },
-              { number: '98%', label: 'Satisfação' },
-              { number: '500+', label: 'Instituições' },
-              { number: '24/7', label: 'Suporte' }
-            ].map((stat, i) => (
-              <div key={i}>
-                <div className="text-3xl md:text-4xl font-semibold text-[#5eead4] mb-2" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{stat.number}</div>
-                <div className="text-[#a8a29e] text-sm">{stat.label}</div>
+          <div className="max-w-xl mx-auto text-center">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+            >
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#5eead4]/10 border border-[#5eead4]/20 text-[#5eead4] text-xs font-medium mb-6">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#5eead4] animate-pulse" />
+                Early Access
               </div>
-            ))}
-          </div>
-        </div>
-      </section>
+              <h2 className="text-3xl md:text-[42px] font-semibold tracking-[-1px] mb-4">
+                Acesso antecipado gratuito
+              </h2>
+              <p className="text-[#a8a29e] mb-8 leading-relaxed">
+                Estamos em fase de acesso antecipado. Deixe seu email e nossa equipe
+                libera seu acesso com todas as funcionalidades — sem custo.
+              </p>
 
-      {/* Pricing */}
-      <section id="planos" className="py-24">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-[42px] font-semibold tracking-[-1px] mb-4">Escolha seu plano</h2>
-            <p className="text-[#a8a29e] max-w-xl mx-auto">Comece grátis. Assine quando precisar.</p>
-          </div>
-          <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto">
-            {plans.map((plan, i) => (
-              <motion.div
-                key={i}
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.1 }}
-                viewport={{ once: true }}
-                className={`p-8 rounded-xl border relative ${
-                  plan.highlighted
-                    ? 'bg-[#134e4a]/10 border-[#5eead4]/40'
-                    : 'bg-[#111110] border-[#292524] hover:border-[#57534e]'
-                }`}
-              >
-                {plan.highlighted && (
-                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-4 py-1 bg-[#5eead4] text-[#134e4a] text-xs font-semibold rounded-full">
-                    Mais popular
-                  </div>
-                )}
-                <h3 className="text-lg font-semibold mb-2">{plan.name}</h3>
-                <div className="flex items-baseline gap-1 mb-2">
-                  <span className="text-4xl font-semibold">{plan.price}</span>
-                  <span className="text-[#57534e] text-sm">{plan.period}</span>
-                </div>
-                <p className="text-[#a8a29e] text-sm mb-6">{plan.description}</p>
-                <ul className="space-y-3 mb-8">
-                  {plan.features.map((feature, j) => (
-                    <li key={j} className="flex items-center gap-3 text-sm text-[#a8a29e]">
-                      <span className="material-symbols-rounded text-[#5eead4] text-lg">check_circle</span>
-                      {feature}
-                    </li>
-                  ))}
-                </ul>
-                <button className={`w-full py-3 rounded-lg font-medium text-sm transition-all ${
-                  plan.highlighted
-                    ? 'bg-[#5eead4] hover:bg-[#99f6e4] text-[#134e4a]'
-                    : 'border border-[#292524] hover:border-[#57534e] text-[#a8a29e] hover:bg-[#111110]'
-                }`}>
-                  {plan.cta}
-                </button>
-              </motion.div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Testimonials */}
-      <section className="py-24 bg-[#111110]/50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-[42px] font-semibold tracking-[-1px] mb-4">O que dizem os pesquisadores</h2>
-          </div>
-          <div className="grid md:grid-cols-3 gap-6">
-            {testimonials.map((t, i) => (
-              <motion.div
-                key={i}
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.1 }}
-                viewport={{ once: true }}
-                className="p-6 rounded-xl bg-[#111110] border border-[#292524]"
-              >
-                <div className="flex items-center gap-4 mb-4">
-                  <div className="w-10 h-10 rounded-lg bg-[#134e4a] flex items-center justify-center text-[#5eead4] font-semibold text-sm">
-                    {t.avatar}
-                  </div>
-                  <div>
-                    <div className="font-medium text-sm">{t.name}</div>
-                    <div className="text-[#57534e] text-xs">{t.role}</div>
-                  </div>
-                </div>
-                <p className="text-[#a8a29e] text-sm italic leading-relaxed">"{t.quote}"</p>
-              </motion.div>
-            ))}
+              {waitlistStatus === 'success' ? (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="p-6 rounded-xl bg-[#5eead4]/10 border border-[#5eead4]/20"
+                >
+                  <span className="material-symbols-rounded text-[#5eead4] text-3xl mb-3 block">check_circle</span>
+                  <p className="text-[#e7e5e4] font-medium mb-1">{waitlistMessage}</p>
+                  <p className="text-[#a8a29e] text-sm">Voce recebera um email quando seu acesso for liberado.</p>
+                </motion.div>
+              ) : (
+                <form onSubmit={handleWaitlist} className="space-y-3 text-left">
+                  <input
+                    type="email"
+                    value={waitlistEmail}
+                    onChange={e => setWaitlistEmail(e.target.value)}
+                    placeholder="Seu melhor e-mail"
+                    required
+                    className="w-full py-3 px-4 bg-[#111110] border border-[#292524] rounded-lg text-sm outline-none text-[#e7e5e4] placeholder-[#78716c] focus:border-[#5eead4]/40 transition-all"
+                  />
+                  <input
+                    type="text"
+                    value={waitlistName}
+                    onChange={e => setWaitlistName(e.target.value)}
+                    placeholder="Nome completo"
+                    className="w-full py-3 px-4 bg-[#111110] border border-[#292524] rounded-lg text-sm outline-none text-[#e7e5e4] placeholder-[#78716c] focus:border-[#5eead4]/40 transition-all"
+                  />
+                  <input
+                    type="text"
+                    value={waitlistInstitution}
+                    onChange={e => setWaitlistInstitution(e.target.value)}
+                    placeholder="Instituicao (opcional)"
+                    className="w-full py-3 px-4 bg-[#111110] border border-[#292524] rounded-lg text-sm outline-none text-[#e7e5e4] placeholder-[#78716c] focus:border-[#5eead4]/40 transition-all"
+                  />
+                  <button
+                    type="submit"
+                    disabled={waitlistStatus === 'loading'}
+                    className="w-full py-3.5 bg-[#5eead4] hover:bg-[#99f6e4] text-[#134e4a] font-semibold text-sm rounded-lg transition-all disabled:opacity-50"
+                  >
+                    {waitlistStatus === 'loading' ? 'Enviando...' : 'Solicitar acesso gratuito'}
+                  </button>
+                  {waitlistStatus === 'error' && (
+                    <p className="text-red-400 text-xs text-center">{waitlistMessage}</p>
+                  )}
+                </form>
+              )}
+            </motion.div>
           </div>
         </div>
       </section>
@@ -420,7 +406,7 @@ export default function Landing() {
                   className="w-full p-5 flex items-center justify-between text-left hover:bg-[#111110] transition-colors"
                 >
                   <span className="font-medium text-sm">{faq.q}</span>
-                  <span className={`material-symbols-rounded text-[#57534e] transition-transform ${openFaq === i ? 'rotate-180' : ''}`}>
+                  <span className={`material-symbols-rounded text-[#78716c] transition-transform ${openFaq === i ? 'rotate-180' : ''}`}>
                     expand_more
                   </span>
                 </button>
@@ -445,12 +431,12 @@ export default function Landing() {
       {/* CTA */}
       <section className="py-24 border-t border-[#292524]">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-          <h2 className="text-3xl md:text-[42px] font-semibold tracking-[-1px] mb-6">Pronto para elevar suas análises?</h2>
+          <h2 className="text-3xl md:text-[42px] font-semibold tracking-[-1px] mb-6">Pronto para elevar suas analises?</h2>
           <p className="text-[#a8a29e] mb-10 max-w-xl mx-auto">
-            Junte-se a milhares de pesquisadores que já estão usando o Paper Metrics para produzir análises de alta qualidade.
+            Solicite seu acesso gratuito e comece a produzir analises estatisticas de alta qualidade em minutos.
           </p>
-          <a href="/login" className="inline-block px-8 py-3.5 bg-[#5eead4] hover:bg-[#99f6e4] text-[#134e4a] font-semibold text-base rounded-lg transition-all">
-            Começar análise grátis
+          <a href="#acesso" onClick={scrollToAccess} className="inline-block px-8 py-3.5 bg-[#5eead4] hover:bg-[#99f6e4] text-[#134e4a] font-semibold text-base rounded-lg transition-all">
+            Solicitar acesso gratuito
           </a>
         </div>
       </section>
@@ -464,13 +450,13 @@ export default function Landing() {
               <ForestPlot className="w-4 h-2" />
               <span className="text-lg font-semibold tracking-[-1px]">Metrics</span>
             </div>
-            <div className="flex items-center gap-6 text-sm text-[#57534e]">
+            <div className="flex items-center gap-6 text-sm text-[#78716c]">
               <a href="#" className="hover:text-[#e7e5e4] transition-colors">Termos</a>
               <a href="#" className="hover:text-[#e7e5e4] transition-colors">Privacidade</a>
               <a href="#" className="hover:text-[#e7e5e4] transition-colors">Contato</a>
             </div>
-            <div className="text-sm text-[#57534e]">
-              © 2026 Paper Metrics. Todos os direitos reservados.
+            <div className="text-sm text-[#78716c]">
+              &copy; 2026 Paper Metrics. Todos os direitos reservados.
             </div>
           </div>
         </div>

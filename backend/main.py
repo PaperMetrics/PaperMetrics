@@ -235,63 +235,69 @@ class ProjectAnalysisLink(SQLModel, table=True):
     project_id: int = Field(primary_key=True)
     history_id: int = Field(primary_key=True)
 
+# ============================================================
+# Modelos de Waitlist e Controle de Acesso
+# ============================================================
+
+class WaitlistEntry(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    email: str = Field(index=True)
+    name: Optional[str] = None
+    institution: Optional[str] = None
+    status: str = "pending"  # pending | approved | rejected
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    approved_at: Optional[datetime] = None
+    invite_token: Optional[str] = None
+
+class PlatformUser(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    email: str = Field(index=True)
+    role: str = "user"  # user | admin
+    is_active: bool = True
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
 def create_db_and_tables():
     SQLModel.metadata.create_all(engine)
 
 from fastapi import Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-auth_scheme = HTTPBearer()
+auth_scheme = HTTPBearer(auto_error=False)
 
-async def get_current_user(token: HTTPAuthorizationCredentials = Depends(auth_scheme)):
+def _decode_jwt(creds: str) -> dict:
+    """Decodifica JWT da Neon Auth e retorna o payload completo."""
+    segments = creds.split('.')
+    if len(segments) != 3:
+        print(f"AUTH WARN: Token não é JWT. Usando fallback para desenvolvimento.")
+        return {"sub": "dev_user", "email": ""}
+
+    jwks_url = f"{NEON_AUTH_URL}/.well-known/jwks.json"
+    jwks = requests.get(jwks_url).json()
+    unverified_header = jwt.get_unverified_header(creds)
+    kid = unverified_header.get("kid")
+
+    rsa_key = {}
+    for key in jwks["keys"]:
+        if key["kid"] == kid:
+            rsa_key = {"kty": key["kty"], "kid": key["kid"], "n": key["n"], "e": key["e"]}
+            break
+
+    if not rsa_key:
+        raise HTTPException(status_code=401, detail="Chave pública não encontrada.")
+
+    payload = jwt.decode(
+        creds, rsa_key, algorithms=["RS256"],
+        audience=None, options={"verify_aud": False}
+    )
+    return payload
+
+async def get_current_user(token: Optional[HTTPAuthorizationCredentials] = Depends(auth_scheme)):
     """Valida o JWT da Neon Auth e extrai o ID do usuário."""
+    if not token:
+        raise HTTPException(status_code=401, detail="Token não fornecido.")
     try:
-        creds = token.credentials
-
-        # Verificar se o token parece ser um JWT válido (3 segmentos separados por ponto)
-        segments = creds.split('.')
-        if len(segments) != 3:
-            # Token não é JWT - pode ser session token opaco do Neon Auth
-            # Para desenvolvimento, usar user_id fixo
-            # Em produção, seria necessário validar o token via API da Neon
-            print(f"AUTH WARN: Token não é JWT. Usando user_id fixo para desenvolvimento.")
-            return "dev_user"
-
-        # 1. Buscar as chaves públicas da Neon Auth (Cachear em produção)
-        jwks_url = f"{NEON_AUTH_URL}/.well-known/jwks.json"
-        jwks = requests.get(jwks_url).json()
-
-        # 2. Extrair o header do token para encontrar a chave correta (kid)
-        unverified_header = jwt.get_unverified_header(creds)
-        kid = unverified_header.get("kid")
-
-        # 3. Encontrar a chave pública correspondente
-        rsa_key = {}
-        for key in jwks["keys"]:
-            if key["kid"] == kid:
-                rsa_key = {
-                    "kty": key["kty"],
-                    "kid": key["kid"],
-                    "n": key["n"],
-                    "e": key["e"]
-                }
-                break
-
-        if not rsa_key:
-            raise HTTPException(status_code=401, detail="Chave pública não encontrada.")
-
-        # 4. Decodificar e validar o token
-        # Nota: O Better Auth/Neon Auth usa o 'sub' como ID do usuário
-        payload = jwt.decode(
-            creds,
-            rsa_key,
-            algorithms=["RS256"],
-            audience=None, # Neon Auth tokens podem não ter audience fixa por padrão
-            options={"verify_aud": False}
-        )
-
-        return payload.get("sub") # user_id
-
+        payload = _decode_jwt(token.credentials)
+        return payload.get("sub")
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expirado.")
     except jwt.InvalidTokenError as e:
@@ -299,8 +305,39 @@ async def get_current_user(token: HTTPAuthorizationCredentials = Depends(auth_sc
         return token.credentials[:64] if token.credentials else "anonymous"
     except Exception as e:
         print(f"AUTH ERR: {str(e)}")
-        # Fallback gracioso em vez de bloquear
         return token.credentials[:64] if token.credentials else "anonymous"
+
+async def get_current_user_info(token: Optional[HTTPAuthorizationCredentials] = Depends(auth_scheme)) -> dict:
+    """Retorna dict com sub (user_id) e email do JWT."""
+    if not token:
+        return {"user_id": "anonymous", "email": ""}
+    try:
+        payload = _decode_jwt(token.credentials)
+        return {"user_id": payload.get("sub"), "email": payload.get("email", "")}
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expirado.")
+    except jwt.InvalidTokenError:
+        return {"user_id": "anonymous", "email": ""}
+    except Exception:
+        return {"user_id": "anonymous", "email": ""}
+
+from fastapi import Request
+
+async def require_admin(request: Request, user_info: dict = Depends(get_current_user_info)):
+    """Verifica se o usuário é admin. Retorna user_info se for."""
+    email = user_info.get("email", "")
+    # Fallback: email via header custom (enviado pelo frontend)
+    if not email:
+        email = request.headers.get("X-User-Email", "")
+    email = email.strip().lower()
+    if not email:
+        raise HTTPException(status_code=403, detail="Acesso negado — email nao identificado.")
+    with Session(engine) as s:
+        pu = s.exec(select(PlatformUser).where(PlatformUser.email == email, PlatformUser.role == "admin", PlatformUser.is_active == True)).first()
+        if not pu:
+            raise HTTPException(status_code=403, detail="Acesso restrito a administradores.")
+    user_info["email"] = email
+    return user_info
 
 app = FastAPI(title="Paper Metrics API", version="2.12.0")
 
@@ -315,7 +352,7 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Authorization", "Content-Type", "X-User-Email"],
 )
 
 @app.middleware("http")
@@ -641,6 +678,281 @@ def clean_dict_values(d: Dict[str, Any]) -> Dict[str, Any]:
 @app.on_event("startup")
 def on_startup():
     create_db_and_tables()
+    # Seed primeiro admin
+    with Session(engine) as s:
+        admin = s.exec(select(PlatformUser).where(PlatformUser.email == "cauazcontato@gmail.com")).first()
+        if not admin:
+            s.add(PlatformUser(email="cauazcontato@gmail.com", role="admin"))
+            s.commit()
+            print("SEED: Admin cauazcontato@gmail.com criado.")
+
+# ============================================================
+# Endpoints de Waitlist e Controle de Acesso
+# ============================================================
+
+class WaitlistRequest(BaseModel):
+    email: str
+    name: Optional[str] = None
+    institution: Optional[str] = None
+
+@app.post("/api/waitlist")
+async def submit_waitlist(req: WaitlistRequest):
+    """Público — submete email para waitlist de early access."""
+    email = req.email.strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Email inválido.")
+    with Session(engine) as s:
+        existing = s.exec(select(WaitlistEntry).where(WaitlistEntry.email == email)).first()
+        if existing:
+            return {"ok": True, "message": "Seu email já está na lista. Entraremos em contato em breve!"}
+        entry = WaitlistEntry(email=email, name=req.name, institution=req.institution)
+        s.add(entry)
+        s.commit()
+    return {"ok": True, "message": "Recebemos seu pedido! Entraremos em contato em breve."}
+
+@app.get("/api/waitlist")
+async def list_waitlist(status: Optional[str] = None, admin: dict = Depends(require_admin)):
+    """Admin — lista pedidos da waitlist."""
+    with Session(engine) as s:
+        query = select(WaitlistEntry)
+        if status:
+            query = query.where(WaitlistEntry.status == status)
+        entries = s.exec(query.order_by(WaitlistEntry.created_at.desc())).all()
+        return [{"id": e.id, "email": e.email, "name": e.name, "institution": e.institution,
+                 "status": e.status, "created_at": e.created_at.isoformat(),
+                 "approved_at": e.approved_at.isoformat() if e.approved_at else None} for e in entries]
+
+@app.post("/api/waitlist/{entry_id}/approve")
+async def approve_waitlist(entry_id: int, admin: dict = Depends(require_admin)):
+    """Admin — aprova pedido e envia email de convite."""
+    with Session(engine) as s:
+        entry = s.get(WaitlistEntry, entry_id)
+        if not entry:
+            raise HTTPException(status_code=404, detail="Pedido não encontrado.")
+        if entry.status == "approved":
+            return {"ok": True, "message": "Já foi aprovado anteriormente."}
+
+        invite_token = str(uuid.uuid4())
+        entry.status = "approved"
+        entry.approved_at = datetime.utcnow()
+        entry.invite_token = invite_token
+
+        # Criar PlatformUser se não existir
+        existing_user = s.exec(select(PlatformUser).where(PlatformUser.email == entry.email)).first()
+        if not existing_user:
+            s.add(PlatformUser(email=entry.email, role="user"))
+
+        s.add(entry)
+        s.commit()
+
+    # Enviar email de convite
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
+    invite_link = f"{frontend_url}/login?invite={invite_token}"
+    email_sent = _send_invite_email(entry.email, entry.name or "Pesquisador(a)", invite_link)
+
+    return {"ok": True, "message": "Aprovado com sucesso.", "email_sent": email_sent, "invite_link": invite_link}
+
+@app.post("/api/waitlist/{entry_id}/reject")
+async def reject_waitlist(entry_id: int, admin: dict = Depends(require_admin)):
+    """Admin — rejeita pedido da waitlist."""
+    with Session(engine) as s:
+        entry = s.get(WaitlistEntry, entry_id)
+        if not entry:
+            raise HTTPException(status_code=404, detail="Pedido não encontrado.")
+        entry.status = "rejected"
+        s.add(entry)
+        s.commit()
+    return {"ok": True, "message": "Pedido rejeitado."}
+
+@app.get("/api/auth/check-access")
+async def check_access(email: Optional[str] = None, user_info: dict = Depends(get_current_user_info)):
+    """Autenticado — verifica se o email do usuário tem acesso à plataforma."""
+    # Preferir email do query param (enviado pelo frontend com dado real do user)
+    # JWT pode retornar email de fallback (dev@localhost) quando token não é JWT real
+    jwt_email = user_info.get("email", "")
+    user_email = (email or jwt_email or "").strip().lower()
+    if not user_email:
+        return {"approved": False, "is_admin": False, "status": "unknown"}
+    with Session(engine) as s:
+        pu = s.exec(select(PlatformUser).where(PlatformUser.email == user_email, PlatformUser.is_active == True)).first()
+        if pu:
+            return {"approved": True, "is_admin": pu.role == "admin", "status": "approved"}
+        # Verificar se está na waitlist
+        wl = s.exec(select(WaitlistEntry).where(WaitlistEntry.email == user_email)).first()
+        if wl:
+            return {"approved": False, "is_admin": False, "status": wl.status}
+        # Auto-criar entrada na waitlist para quem logou mas não está no sistema
+        s.add(WaitlistEntry(email=user_email))
+        s.commit()
+        print(f"WAITLIST AUTO: {user_email} adicionado automaticamente via login.")
+    return {"approved": False, "is_admin": False, "status": "pending"}
+
+@app.get("/api/admin/users")
+async def list_users(admin: dict = Depends(require_admin)):
+    """Admin — lista todos os usuários da plataforma."""
+    with Session(engine) as s:
+        users = s.exec(select(PlatformUser).order_by(PlatformUser.created_at.desc())).all()
+        return [{"id": u.id, "email": u.email, "role": u.role, "is_active": u.is_active,
+                 "created_at": u.created_at.isoformat()} for u in users]
+
+@app.post("/api/admin/users/{user_id}/toggle-admin")
+async def toggle_admin(user_id: int, admin: dict = Depends(require_admin)):
+    """Admin — promove ou rebaixa um usuário."""
+    with Session(engine) as s:
+        user = s.get(PlatformUser, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="Usuário não encontrado.")
+        if user.email == "cauazcontato@gmail.com":
+            raise HTTPException(status_code=400, detail="Não é possível alterar o admin principal.")
+        user.role = "user" if user.role == "admin" else "admin"
+        s.add(user)
+        s.commit()
+        return {"ok": True, "new_role": user.role}
+
+class AddUserRequest(BaseModel):
+    email: str
+    role: str = "admin"
+
+@app.post("/api/admin/users")
+async def add_user(req: AddUserRequest, admin: dict = Depends(require_admin)):
+    """Admin — adiciona um usuário diretamente à plataforma."""
+    email = req.email.strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Email inválido.")
+    role = req.role if req.role in ("admin", "user") else "user"
+    with Session(engine) as s:
+        existing = s.exec(select(PlatformUser).where(PlatformUser.email == email)).first()
+        if existing:
+            if not existing.is_active:
+                existing.is_active = True
+                existing.role = role
+                s.add(existing)
+                s.commit()
+                return {"ok": True, "message": f"Usuário {email} reativado como {role}."}
+            raise HTTPException(status_code=409, detail="Usuário já existe na plataforma.")
+        s.add(PlatformUser(email=email, role=role))
+        s.commit()
+    return {"ok": True, "message": f"Usuário {email} adicionado como {role}."}
+
+@app.delete("/api/admin/users/{user_id}")
+async def revoke_user(user_id: int, admin: dict = Depends(require_admin)):
+    """Admin — revoga acesso de um usuário."""
+    with Session(engine) as s:
+        user = s.get(PlatformUser, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="Usuário não encontrado.")
+        if user.email == "cauazcontato@gmail.com":
+            raise HTTPException(status_code=400, detail="Não é possível revogar o admin principal.")
+        user.is_active = False
+        s.add(user)
+        s.commit()
+        return {"ok": True, "message": "Acesso revogado."}
+
+@app.post("/api/auth/validate-invite")
+async def validate_invite(token: str):
+    """Público — valida token de convite e retorna email associado."""
+    with Session(engine) as s:
+        entry = s.exec(select(WaitlistEntry).where(WaitlistEntry.invite_token == token, WaitlistEntry.status == "approved")).first()
+        if not entry:
+            raise HTTPException(status_code=404, detail="Convite inválido ou expirado.")
+        return {"ok": True, "email": entry.email}
+
+def _send_invite_email(to_email: str, name: str, invite_link: str) -> bool:
+    """Envia email de convite usando Resend (se configurado) ou SMTP fallback."""
+    resend_key = os.getenv("RESEND_API_KEY")
+    if resend_key:
+        try:
+            import resend
+            resend.api_key = resend_key
+            resend.Emails.send({
+                "from": os.getenv("RESEND_FROM", "Paper Metrics <noreply@papermetrics.com>"),
+                "to": [to_email],
+                "subject": "Seu acesso ao Paper Metrics foi aprovado!",
+                "html": f"""
+                <div style="font-family: Inter, system-ui, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
+                    <h2 style="color: #0d9488; margin-bottom: 8px;">Paper Metrics</h2>
+                    <p>Olá, {name}!</p>
+                    <p>Seu acesso ao Paper Metrics foi aprovado. Clique no botão abaixo para entrar na plataforma:</p>
+                    <a href="{invite_link}" style="display: inline-block; padding: 12px 24px; background: #0d9488; color: white; text-decoration: none; border-radius: 8px; font-weight: 600; margin: 16px 0;">
+                        Acessar Paper Metrics
+                    </a>
+                    <p style="color: #78716c; font-size: 14px; margin-top: 24px;">Se o botão não funcionar, copie e cole este link no navegador:<br/>{invite_link}</p>
+                </div>
+                """
+            })
+            print(f"INVITE: Email enviado para {to_email} via Resend.")
+            return True
+        except Exception as e:
+            print(f"INVITE ERR (Resend): {e}")
+            return False
+
+    # Fallback SMTP
+    email_user = os.getenv("EMAIL_USER")
+    email_password = os.getenv("EMAIL_PASSWORD")
+    if email_user and email_password:
+        try:
+            import smtplib
+            from email.mime.text import MIMEText
+            from email.mime.multipart import MIMEMultipart
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = "Seu acesso ao Paper Metrics foi aprovado!"
+            msg["From"] = email_user
+            msg["To"] = to_email
+            html = f"""<div style="font-family: Inter, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
+                <h2 style="color: #0d9488;">Paper Metrics</h2>
+                <p>Olá, {name}!</p>
+                <p>Seu acesso foi aprovado. <a href="{invite_link}">Clique aqui para entrar.</a></p>
+            </div>"""
+            msg.attach(MIMEText(html, "html"))
+            host = os.getenv("EMAIL_HOST", "smtp.gmail.com")
+            port = int(os.getenv("EMAIL_PORT", "587"))
+            with smtplib.SMTP(host, port) as server:
+                server.starttls()
+                server.login(email_user, email_password)
+                server.sendmail(email_user, to_email, msg.as_string())
+            print(f"INVITE: Email enviado para {to_email} via SMTP.")
+            return True
+        except Exception as e:
+            print(f"INVITE ERR (SMTP): {e}")
+            return False
+
+    print(f"INVITE WARN: Nenhum serviço de email configurado. Link: {invite_link}")
+    return False
+
+@app.get("/api/data/sample")
+async def get_sample_dataset(user_id: str = Depends(get_current_user)):
+    """Retorna dataset clínico de exemplo para onboarding."""
+    np.random.seed(42)
+    n = 50
+    groups = np.random.choice(["Tratamento", "Controle"], n)
+    ages = np.random.normal(55, 12, n).astype(int)
+    ages = np.clip(ages, 25, 85)
+    sex = np.random.choice(["M", "F"], n)
+    systolic = np.where(groups == "Tratamento",
+                        np.random.normal(128, 15, n),
+                        np.random.normal(140, 18, n)).round(1)
+    diastolic = np.where(groups == "Tratamento",
+                         np.random.normal(78, 10, n),
+                         np.random.normal(85, 12, n)).round(1)
+    cholesterol = np.random.normal(200, 35, n).round(1)
+    outcome = np.where(groups == "Tratamento",
+                       np.random.choice(["Melhora", "Sem alteração"], n, p=[0.7, 0.3]),
+                       np.random.choice(["Melhora", "Sem alteração"], n, p=[0.4, 0.6]))
+
+    df = pd.DataFrame({
+        "Grupo": groups, "Idade": ages, "Sexo": sex,
+        "PAS_mmHg": systolic, "PAD_mmHg": diastolic,
+        "Colesterol_Total": cholesterol, "Desfecho": outcome
+    })
+
+    return {
+        "filename": "exemplo_clinico.csv",
+        "columns": list(df.columns),
+        "dtypes": {c: str(df[c].dtype) for c in df.columns},
+        "shape": list(df.shape),
+        "preview": df.head(10).to_dict(orient="records"),
+        "csv_data": df.to_csv(index=False)
+    }
 
 # ============================================================
 # Endpoints de Dados e Análise (Precision & Telemetry)
@@ -1516,12 +1828,32 @@ async def analyze_protocol_v7(
             # Detectar binária
             is_binary = not is_numeric and unique_count == 2
             
-            # Teste de normalidade (Shapiro-Wilk) para variáveis numéricas
+            # Teste de normalidade robusto: Shapiro-Wilk + complemento para amostras grandes
             normality = None
-            if is_numeric and len(non_null) >= 3 and len(non_null) <= 5000:
+            if is_numeric and len(non_null) >= 3:
                 try:
-                    _, shapiro_p = stats.shapiro(non_null.values)
-                    normality = "normal" if shapiro_p > 0.05 else "nao-normal"
+                    vals = non_null.values
+                    n = len(vals)
+                    if n <= 5000:
+                        _, shapiro_p = stats.shapiro(vals)
+                    else:
+                        # D'Agostino-Pearson para n > 5000 (Shapiro não suporta)
+                        _, shapiro_p = stats.normaltest(vals)
+
+                    if n <= 50:
+                        # Amostras pequenas: Shapiro-Wilk é confiável
+                        normality = "normal" if shapiro_p > 0.05 else "nao-normal"
+                    else:
+                        # n > 50: Shapiro rejeita por desvios triviais.
+                        # Complementar com skewness/kurtosis (Curran et al., 1996)
+                        skew = float(stats.skew(vals))
+                        kurt = float(stats.kurtosis(vals))
+                        if shapiro_p > 0.05:
+                            normality = "normal"
+                        elif abs(skew) < 2 and abs(kurt) < 7:
+                            normality = "aprox-normal"  # praticamente normal
+                        else:
+                            normality = "nao-normal"
                 except:
                     normality = "unknown"
             
@@ -1569,11 +1901,20 @@ async def analyze_protocol_v7(
                         info_a = var_info.get(col_a, {})
                         info_b = var_info.get(col_b, {})
                         if info_a.get('is_numeric') and info_b.get('is_numeric'):
+                            norm_a = info_a.get('normality', 'unknown')
+                            norm_b = info_b.get('normality', 'unknown')
+                            is_normal = norm_a in ('normal', 'aprox-normal') and norm_b in ('normal', 'aprox-normal')
+                            if is_normal:
+                                pair_test = "Teste T Pareado"
+                                pair_opts = ["Teste T Pareado", "Wilcoxon Pareado", "Excluir"]
+                            else:
+                                pair_test = "Wilcoxon Pareado"
+                                pair_opts = ["Wilcoxon Pareado", "Teste T Pareado", "Excluir"]
                             detected_pairs.append({
                                 "col_a": col_a,
                                 "col_b": col_b,
-                                "test": "Teste T Pareado",
-                                "test_options": ["Teste T Pareado", "Wilcoxon Pareado", "Excluir"],
+                                "test": pair_test,
+                                "test_options": pair_opts,
                                 "rationale": f"Variáveis pareadas detectadas ('{col_a}' vs '{col_b}'). Mesmo sujeito medido em dois momentos.",
                                 "type": "Pareado (antes/depois)"
                             })
@@ -1665,21 +2006,66 @@ async def analyze_protocol_v7(
                 already_in_corr = any(cp['col_a'] == num_col or cp['col_b'] == num_col for cp in correlation_pairs)
                 
                 normality_status = var_info[num_col].get('normality', 'unknown')
-                
-                if cat_unique == 2:
-                    if normality_status == 'normal':
-                        rec_test = 'Teste T Independente'
-                        opt_tests = ['Teste T Independente', 'Mann-Whitney U', 'Excluir']
+                is_ordinal = var_info[num_col].get('is_ordinal', False)
+
+                # Ordinal: sempre não-paramétrico (2.3)
+                if is_ordinal:
+                    if cat_unique == 2:
+                        rec_test = 'Mann-Whitney U'
+                        opt_tests = ['Mann-Whitney U', 'Excluir']
+                    elif cat_unique >= 3:
+                        rec_test = 'Kruskal-Wallis H'
+                        opt_tests = ['Kruskal-Wallis H', 'Excluir']
+                    else:
+                        continue
+                elif cat_unique == 2:
+                    if normality_status in ('normal', 'aprox-normal'):
+                        # Check variance homogeneity for Welch's vs standard t-test
+                        try:
+                            groups_for_levene = [pd.to_numeric(df[df[cat_col] == v][num_col], errors='coerce').dropna().values
+                                                 for v in df[cat_col].dropna().unique()]
+                            groups_for_levene = [g for g in groups_for_levene if len(g) >= 2]
+                            if len(groups_for_levene) == 2:
+                                _, levene_p = stats.levene(*groups_for_levene)
+                                if levene_p < 0.05:
+                                    rec_test = "Welch's T-Test"
+                                    opt_tests = ["Welch's T-Test", 'Teste T Independente', 'Mann-Whitney U', 'Excluir']
+                                else:
+                                    rec_test = 'Teste T Independente'
+                                    opt_tests = ['Teste T Independente', "Welch's T-Test", 'Mann-Whitney U', 'Excluir']
+                            else:
+                                rec_test = 'Teste T Independente'
+                                opt_tests = ['Teste T Independente', "Welch's T-Test", 'Mann-Whitney U', 'Excluir']
+                        except:
+                            rec_test = 'Teste T Independente'
+                            opt_tests = ['Teste T Independente', "Welch's T-Test", 'Mann-Whitney U', 'Excluir']
                     else:
                         rec_test = 'Mann-Whitney U'
-                        opt_tests = ['Mann-Whitney U', 'Teste T Independente', 'Excluir']
+                        opt_tests = ['Mann-Whitney U', 'Teste T Independente', "Welch's T-Test", 'Excluir']
                 elif cat_unique >= 3:
-                    if normality_status == 'normal':
-                        rec_test = 'ANOVA One-Way'
-                        opt_tests = ['ANOVA One-Way', 'Kruskal-Wallis H', 'Excluir']
+                    if normality_status in ('normal', 'aprox-normal'):
+                        # Check variance homogeneity for Welch's ANOVA
+                        try:
+                            groups_for_levene = [pd.to_numeric(df[df[cat_col] == v][num_col], errors='coerce').dropna().values
+                                                 for v in df[cat_col].dropna().unique()]
+                            groups_for_levene = [g for g in groups_for_levene if len(g) >= 2]
+                            if len(groups_for_levene) >= 2:
+                                _, levene_p = stats.levene(*groups_for_levene)
+                                if levene_p < 0.05:
+                                    rec_test = "Welch's ANOVA"
+                                    opt_tests = ["Welch's ANOVA", 'ANOVA One-Way', 'Kruskal-Wallis H', 'Excluir']
+                                else:
+                                    rec_test = 'ANOVA One-Way'
+                                    opt_tests = ['ANOVA One-Way', "Welch's ANOVA", 'Kruskal-Wallis H', 'Excluir']
+                            else:
+                                rec_test = 'ANOVA One-Way'
+                                opt_tests = ['ANOVA One-Way', "Welch's ANOVA", 'Kruskal-Wallis H', 'Excluir']
+                        except:
+                            rec_test = 'ANOVA One-Way'
+                            opt_tests = ['ANOVA One-Way', "Welch's ANOVA", 'Kruskal-Wallis H', 'Excluir']
                     else:
                         rec_test = 'Kruskal-Wallis H'
-                        opt_tests = ['Kruskal-Wallis H', 'ANOVA One-Way', 'Excluir']
+                        opt_tests = ['Kruskal-Wallis H', 'ANOVA One-Way', "Welch's ANOVA", 'Excluir']
                 else:
                     continue
                 
@@ -2025,6 +2411,12 @@ def compute_effect_size(test_type, **kwargs):
                 std_diff = np.std(diff, ddof=1)
                 if std_diff > 0:
                     cohens_d = float(np.mean(diff) / std_diff)
+                    n = len(diff)
+                    # Hedges' g for small samples (n < 20)
+                    if n < 20:
+                        correction = 1 - 3 / (4 * n - 9) if n > 4 else 1
+                        hedges_g = cohens_d * correction
+                        return {"cohens_d": round(hedges_g, 4), "hedges_g": round(hedges_g, 4), "interpretation": interpret_cohens_d(hedges_g)}
                     return {"cohens_d": round(cohens_d, 4), "interpretation": interpret_cohens_d(cohens_d)}
         elif test_type in ("ttest_ind", "mann_whitney"):
             g1, g2 = kwargs.get("g1"), kwargs.get("g2")
@@ -2034,8 +2426,13 @@ def compute_effect_size(test_type, **kwargs):
                 s_pooled = np.sqrt(((n1-1)*s1 + (n2-1)*s2) / (n1+n2-2)) if (n1+n2-2) > 0 else 0
                 if s_pooled > 0:
                     cohens_d = float((np.mean(g1) - np.mean(g2)) / s_pooled)
+                    # Hedges' g for small samples (n < 20 per group)
+                    if n1 < 20 or n2 < 20:
+                        correction = 1 - 3 / (4 * (n1 + n2) - 9) if (n1 + n2) > 4 else 1
+                        hedges_g = cohens_d * correction
+                        return {"cohens_d": round(hedges_g, 4), "hedges_g": round(hedges_g, 4), "interpretation": interpret_cohens_d(hedges_g)}
                     return {"cohens_d": round(cohens_d, 4), "interpretation": interpret_cohens_d(cohens_d)}
-        elif test_type in ("anova", "kruskal"):
+        elif test_type == "anova":
             groups = kwargs.get("groups")
             if groups and len(groups) >= 2:
                 all_vals = np.concatenate(groups)
@@ -2046,6 +2443,17 @@ def compute_effect_size(test_type, **kwargs):
                 if ss_total > 0:
                     eta_sq = float(ss_between / ss_total)
                     return {"eta_squared": round(eta_sq, 4), "interpretation": interpret_eta_squared(eta_sq)}
+        elif test_type == "kruskal":
+            groups = kwargs.get("groups")
+            h_stat = kwargs.get("h_stat")
+            if groups and len(groups) >= 2:
+                N = sum(len(g) for g in groups)
+                k = len(groups)
+                if h_stat is None:
+                    res = stats.kruskal(*groups)
+                    h_stat = float(res.statistic)
+                epsilon_sq = max(0.0, (h_stat - k + 1) / (N - k)) if (N - k) > 0 else 0
+                return {"epsilon_squared": round(epsilon_sq, 4), "eta_squared": round(epsilon_sq, 4), "interpretation": interpret_eta_squared(epsilon_sq)}
         elif test_type in ("pearson", "spearman"):
             r = kwargs.get("r")
             if r is not None:
@@ -2054,8 +2462,9 @@ def compute_effect_size(test_type, **kwargs):
         elif test_type in ("chi2",):
             chi2_stat = kwargs.get("chi2")
             n_total = kwargs.get("n_total")
-            if chi2_stat is not None and n_total and n_total > 0:
-                v = float(chi2_stat / n_total)
+            min_dim = kwargs.get("min_dim", 1)
+            if chi2_stat is not None and n_total and n_total > 0 and min_dim > 0:
+                v = float(np.sqrt(chi2_stat / (n_total * min_dim)))
                 return {"cramers_v": round(v, 4), "interpretation": interpret_cramers_v(v)}
     except:
         pass
@@ -2088,12 +2497,14 @@ def interpret_cramers_v(v):
     return "Desprezível"
 
 def compute_ci_95(data):
-    """Calcula IC 95% da média."""
+    """Calcula IC 95% da média usando distribuição t (correto para qualquer n)."""
+    from scipy.stats import t as t_dist
     n = len(data)
     if n < 2: return None
     mean = np.mean(data)
     se = np.std(data, ddof=1) / np.sqrt(n)
-    margin = 1.96 * se
+    t_crit = t_dist.ppf(0.975, df=n - 1)
+    margin = t_crit * se
     return {"mean": round(float(mean), 4), "ci_lower": round(float(mean - margin), 4), "ci_upper": round(float(mean + margin), 4), "se": round(float(se), 4)}
 
 def wilson_ci_proportion(successes, n, confidence=0.95):
@@ -2178,45 +2589,57 @@ def compute_missing_data_summary(df):
     return missing
 
 def check_statistical_assumptions(test_type, **kwargs):
-    """Verifica pressupostos estatísticos e retorna warnings."""
+    """Verifica pressupostos estatísticos e retorna warnings + recommended_alternative."""
     warnings = []
-    
+    recommended_alternative = None
+
     if test_type in ("ttest_paired", "ttest_ind"):
         diff = kwargs.get("diff") or (kwargs.get("g1") - kwargs.get("g2")) if kwargs.get("g1") is not None and kwargs.get("g2") is not None else None
         if diff is not None and len(diff) >= 3:
             try:
-                _, shapiro_p = stats.shapiro(diff)
-                if shapiro_p < 0.05:
+                norm_result = comprehensive_normality_check(diff)
+                if norm_result["conclusion"] == "nao-normal":
+                    alt = "Wilcoxon Pareado" if test_type == "ttest_paired" else "Mann-Whitney U"
+                    recommended_alternative = alt
+                    sw_p = norm_result.get("shapiro_wilk", {}).get("p_value", "N/A")
                     warnings.append({
                         "type": "normality_violation",
                         "severity": "warning",
-                        "message": f"Os dados não seguem distribuição normal (Shapiro-Wilk p={shapiro_p:.4f} < 0.05). Considere usar teste não-paramétrico (Wilcoxon/Mann-Whitney).",
-                        "recommendation": "Wilcoxon Pareado" if test_type == "ttest_paired" else "Mann-Whitney U"
+                        "message": f"Os dados não seguem distribuição normal (Shapiro-Wilk p={sw_p}). Considere usar teste não-paramétrico.",
+                        "recommendation": alt
+                    })
+                elif norm_result["conclusion"] == "aprox-normal":
+                    warnings.append({
+                        "type": "normality_approx",
+                        "severity": "info",
+                        "message": "Normalidade aproximada (distribuição aceitável para testes paramétricos com n > 30).",
+                        "recommendation": None
                     })
             except:
                 pass
-        
+
         # Homogeneity of variance (Levene's test) for independent t-test
         if test_type == "ttest_ind" and kwargs.get("g1") is not None and kwargs.get("g2") is not None:
             try:
                 _, levene_p = stats.levene(kwargs["g1"], kwargs["g2"])
                 if levene_p < 0.05:
+                    recommended_alternative = "Welch's T-Test"
                     warnings.append({
                         "type": "homogeneity_violation",
                         "severity": "warning",
-                        "message": f"Variâncias desiguais entre grupos (Levene p={levene_p:.4f}). Considere usar Welch's t-test ou Mann-Whitney.",
-                        "recommendation": "Mann-Whitney U"
+                        "message": f"Variâncias desiguais entre grupos (Levene p={levene_p:.4f}). Considere usar Welch's t-test.",
+                        "recommendation": "Welch's T-Test"
                     })
             except:
                 pass
-        
-        # Sample size check
+
+        # Sample size check + Hedges' g recommendation
         n = kwargs.get("n", 0)
         if n > 0 and n < 30:
             warnings.append({
                 "type": "small_sample",
                 "severity": "info",
-                "message": f"Amostra pequena (n={n} < 30). Resultados devem ser interpretados com cautela.",
+                "message": f"Amostra pequena (n={n} < 30). Usando Hedges' g em vez de Cohen's d. Resultados devem ser interpretados com cautela.",
                 "recommendation": None
             })
     
@@ -2227,11 +2650,12 @@ def check_statistical_assumptions(test_type, **kwargs):
             try:
                 _, levene_p = stats.levene(*groups)
                 if levene_p < 0.05:
+                    recommended_alternative = "Welch's ANOVA"
                     warnings.append({
                         "type": "homogeneity_violation",
                         "severity": "warning",
-                        "message": f"Variâncias heterogêneas entre grupos (Levene p={levene_p:.4f}). Considere Kruskal-Wallis.",
-                        "recommendation": "Kruskal-Wallis H"
+                        "message": f"Variâncias heterogêneas entre grupos (Levene p={levene_p:.4f}). Considere Welch's ANOVA ou Kruskal-Wallis.",
+                        "recommendation": "Welch's ANOVA"
                     })
             except:
                 pass
@@ -2286,70 +2710,286 @@ def check_statistical_assumptions(test_type, **kwargs):
     
     return warnings
 
-def compute_post_hoc_anova(groups, group_names):
-    """Post-hoc pairwise comparisons após ANOVA significativa."""
-    results = []
+def compute_vif(df, predictor_cols):
+    """Calcula Variance Inflation Factor para detectar multicolinearidade."""
+    try:
+        from statsmodels.stats.outliers_influence import variance_inflation_factor
+        numeric_cols = [c for c in predictor_cols if pd.api.types.is_numeric_dtype(df[c])]
+        if len(numeric_cols) < 2:
+            return None
+        X = df[numeric_cols].dropna()
+        if len(X) < len(numeric_cols) + 1:
+            return None
+        X = add_constant(X)
+        vif_data = []
+        for i, col in enumerate(numeric_cols):
+            vif_val = variance_inflation_factor(X.values, i + 1)  # +1 because of constant
+            severity = "severo" if vif_val > 10 else "moderado" if vif_val > 5 else "ok"
+            vif_data.append({"variable": col, "vif": round(float(vif_val), 2), "severity": severity})
+        return vif_data
+    except Exception as e:
+        print(f"VIF computation error: {e}")
+        return None
+
+def detect_study_design(df):
+    """Detecta automaticamente o tipo de estudo pela estrutura dos dados (Fase 6.1)."""
+    cols_lower = {c: c.lower() for c in df.columns}
+    design = {"type": "unknown", "confidence": 0, "recommended_tests": [], "hints": []}
+
+    # Check for survival data
+    survival_keywords = ['tempo', 'time', 'survival', 'sobrevida', 'duration']
+    event_keywords = ['evento', 'event', 'censura', 'censor', 'status', 'death', 'morte', 'obito']
+    has_time = any(any(kw in v for kw in survival_keywords) for v in cols_lower.values())
+    has_event = any(any(kw in v for kw in event_keywords) for v in cols_lower.values())
+    if has_time and has_event:
+        design = {"type": "survival", "confidence": 80, "recommended_tests": ["Kaplan-Meier", "Log-rank", "Cox"],
+                  "hints": ["Colunas de tempo + evento detectadas"]}
+        return design
+
+    # Check for RCT
+    rct_keywords = ['grupo', 'group', 'treatment', 'arm', 'placebo', 'controle', 'intervenção', 'intervencao', 'tratamento']
+    has_rct = any(any(kw in v for kw in rct_keywords) for v in cols_lower.values())
+    if has_rct:
+        design = {"type": "rct", "confidence": 70, "recommended_tests": ["Teste T Independente", "ANOVA One-Way", "Mann-Whitney U"],
+                  "hints": ["Colunas de grupo/tratamento detectadas"]}
+
+    # Check for paired/before-after
+    paired_keywords_detect = ['antes', 'pre', 'baseline', 'inicio', 'entrada']
+    paired_after = ['depois', 'pos', 'post', 'follow', 'final', 'fim', 'saida', 'alta']
+    has_before = any(any(kw in v for kw in paired_keywords_detect) for v in cols_lower.values())
+    has_after = any(any(kw in v for kw in paired_after) for v in cols_lower.values())
+    if has_before and has_after:
+        design = {"type": "before_after", "confidence": 75,
+                  "recommended_tests": ["Teste T Pareado", "Wilcoxon Pareado", "McNemar"],
+                  "hints": ["Pares antes/depois detectados"]}
+        return design
+
+    # Check for survey/questionnaire (multiple Likert-type columns)
+    ordinal_count = 0
+    for col in df.columns:
+        vals = pd.to_numeric(df[col], errors='coerce').dropna()
+        if len(vals) > 0:
+            unique_sorted = sorted(vals.unique())
+            if 3 <= len(unique_sorted) <= 7:
+                diffs = np.diff(unique_sorted)
+                if len(diffs) > 0 and np.all(np.isclose(diffs, diffs[0], atol=0.5)):
+                    ordinal_count += 1
+    if ordinal_count >= 3:
+        design = {"type": "survey", "confidence": 65,
+                  "recommended_tests": ["Correlação de Spearman", "Mann-Whitney U", "Kruskal-Wallis H", "Friedman"],
+                  "hints": [f"{ordinal_count} colunas Likert/ordinais detectadas"]}
+        return design
+
+    if design["type"] == "unknown" and has_rct:
+        return design
+
+    return design
+
+def format_apa(test_type, **kwargs):
+    """Formata resultado estatístico no padrão APA 7th Edition (Fase 6.2)."""
+    stat = kwargs.get("statistic")
+    p = kwargs.get("p_value")
+    effect = kwargs.get("effect_size")
+    df1 = kwargs.get("df1") or kwargs.get("df_between")
+    df2 = kwargs.get("df2") or kwargs.get("df_within")
+    df_val = kwargs.get("df")
+    n = kwargs.get("n")
+
+    p_str = "< .001" if p is not None and p < 0.001 else f"= {p:.3f}" if p is not None else "N/A"
+
+    if test_type in ("ttest_ind", "ttest_paired", "welch_t"):
+        d_str = f", d = {effect:.2f}" if effect is not None else ""
+        df_str = f"({df_val})" if df_val is not None else f"({n - 2})" if n else ""
+        return f"t{df_str} = {stat:.2f}, p {p_str}{d_str}"
+
+    elif test_type in ("anova", "welch_anova"):
+        eta_str = f", partial η² = {effect:.3f}" if effect is not None else ""
+        if df1 is not None and df2 is not None:
+            return f"F({df1}, {df2:.1f}) = {stat:.2f}, p {p_str}{eta_str}"
+        return f"F = {stat:.2f}, p {p_str}{eta_str}"
+
+    elif test_type == "chi2":
+        v_str = f", V = {effect:.2f}" if effect is not None else ""
+        df_str = f"({df_val})" if df_val is not None else ""
+        return f"χ²{df_str} = {stat:.2f}, p {p_str}{v_str}"
+
+    elif test_type in ("mann_whitney",):
+        r_str = f", r = {effect:.2f}" if effect is not None else ""
+        return f"U = {stat:.1f}, p {p_str}{r_str}"
+
+    elif test_type in ("kruskal",):
+        eps_str = f", ε² = {effect:.3f}" if effect is not None else ""
+        return f"H = {stat:.2f}, p {p_str}{eps_str}"
+
+    elif test_type in ("pearson", "spearman"):
+        return f"r = {stat:.2f}, p {p_str}"
+
+    elif test_type == "fisher":
+        or_str = f", OR = {effect:.2f}" if effect is not None else ""
+        return f"Fisher exact, p {p_str}{or_str}"
+
+    elif test_type == "wilcoxon":
+        r_str = f", r = {effect:.2f}" if effect is not None else ""
+        return f"W = {stat:.1f}, p {p_str}{r_str}"
+
+    elif test_type == "friedman":
+        w_str = f", W = {effect:.3f}" if effect is not None else ""
+        return f"χ²F = {stat:.2f}, p {p_str}{w_str}"
+
+    return f"stat = {stat}, p {p_str}"
+
+def compute_post_hoc_anova(groups, group_names, equal_var=True):
+    """Post-hoc pairwise comparisons após ANOVA significativa.
+    Tukey HSD (variâncias iguais) ou Games-Howell (variâncias desiguais).
+    Correção de p-valores via Holm (1979) — uniformemente mais poderoso que Bonferroni.
+    """
     n_comparisons = len(groups) * (len(groups) - 1) // 2
-    alpha_bonferroni = 0.05 / n_comparisons
-    
+
+    # Try Pingouin Tukey / Games-Howell first
+    if PINGOUIN_AVAILABLE and len(groups) >= 2:
+        try:
+            all_data = []
+            for i, g in enumerate(groups):
+                for val in g:
+                    all_data.append({"value": float(val), "group": str(group_names[i])})
+            df_ph = pd.DataFrame(all_data)
+
+            if equal_var:
+                ph_res = pg.pairwise_tukey(data=df_ph, dv="value", between="group")
+                method = "Tukey HSD"
+            else:
+                ph_res = pg.pairwise_gameshowell(data=df_ph, dv="value", between="group")
+                method = "Games-Howell"
+
+            results = []
+            for _, row in ph_res.iterrows():
+                a_name = str(row.get("A", row.get("group1", "")))
+                b_name = str(row.get("B", row.get("group2", "")))
+                p_val = float(row.get("p-tukey", row.get("pval", row.get("p-val", 1.0))))
+                hedges = round_res(row.get("hedges", row.get("cohen_d", None)))
+                results.append({
+                    "comparison": f"{a_name} vs {b_name}",
+                    "p_value": round(p_val, 6),
+                    "significant": p_val < 0.05,
+                    "hedges_g": hedges,
+                    "effect_interpretation": interpret_cohens_d(hedges) if hedges is not None else None
+                })
+            return {"method": method, "n_comparisons": n_comparisons, "comparisons": results}
+        except Exception as e:
+            print(f"Post-hoc Tukey/GH fallback: {e}")
+
+    # Fallback: pairwise t-tests with Holm correction
+    from statsmodels.stats.multitest import multipletests
+    results = []
+    raw_pvals = []
+    comparison_data = []
+
     for i in range(len(groups)):
         for j in range(i + 1, len(groups)):
             g1, g2 = groups[i], groups[j]
             if len(g1) >= 2 and len(g2) >= 2:
-                # Tukey-style pairwise t-test with Bonferroni
-                res = stats.ttest_ind(g1, g2)
-                p_corrected = min(res.pvalue * n_comparisons, 1.0)
-                
-                # Effect size
+                res = stats.ttest_ind(g1, g2, equal_var=equal_var)
                 n1, n2 = len(g1), len(g2)
                 s1, s2 = np.var(g1, ddof=1), np.var(g2, ddof=1)
                 s_pooled = np.sqrt(((n1-1)*s1 + (n2-1)*s2) / (n1+n2-2)) if (n1+n2-2) > 0 else 0
                 cohens_d = float((np.mean(g1) - np.mean(g2)) / s_pooled) if s_pooled > 0 else 0
-                
-                results.append({
-                    "comparison": f"{group_names[i]} vs {group_names[j]}",
-                    "t_statistic": round(float(res.statistic), 4),
-                    "p_value_raw": round(float(res.pvalue), 6),
-                    "p_value_bonferroni": round(float(p_corrected), 6),
-                    "significant": p_corrected < 0.05,
-                    "cohens_d": round(cohens_d, 4),
-                    "effect_interpretation": interpret_cohens_d(cohens_d)
-                })
-    
-    return {"method": "Bonferroni", "alpha_adjustado": round(alpha_bonferroni, 6), "n_comparisons": n_comparisons, "comparisons": results}
+                # Hedges' g correction for small samples
+                correction = 1 - 3 / (4 * (n1 + n2) - 9) if (n1 + n2) > 4 else 1
+                hedges_g = cohens_d * correction
+                raw_pvals.append(float(res.pvalue))
+                comparison_data.append((i, j, float(res.statistic), hedges_g))
+
+    if raw_pvals:
+        _, corrected_pvals, _, _ = multipletests(raw_pvals, method='holm')
+        for idx, (i, j, t_stat, hedges_g) in enumerate(comparison_data):
+            results.append({
+                "comparison": f"{group_names[i]} vs {group_names[j]}",
+                "t_statistic": round(t_stat, 4),
+                "p_value_raw": round(raw_pvals[idx], 6),
+                "p_value_holm": round(float(corrected_pvals[idx]), 6),
+                "significant": corrected_pvals[idx] < 0.05,
+                "hedges_g": round(hedges_g, 4),
+                "effect_interpretation": interpret_cohens_d(hedges_g)
+            })
+
+    return {"method": "Holm-Bonferroni", "n_comparisons": n_comparisons, "comparisons": results}
 
 def compute_post_hoc_kruskal(groups, group_names):
-    """Post-hoc pairwise Mann-Whitney após Kruskal-Wallis significativo."""
-    results = []
+    """Post-hoc Dunn's test após Kruskal-Wallis significativo (usa ranks consistentes).
+    Fallback: pairwise Mann-Whitney com Holm correction."""
     n_comparisons = len(groups) * (len(groups) - 1) // 2
-    
+
+    # Try scikit-posthocs Dunn's test first
+    try:
+        import scikit_posthocs as sp
+        all_data = []
+        for i, g in enumerate(groups):
+            for val in g:
+                all_data.append({"value": float(val), "group": str(group_names[i])})
+        df_ph = pd.DataFrame(all_data)
+        dunn_res = sp.posthoc_dunn(df_ph, val_col="value", group_col="group", p_adjust="holm")
+        results = []
+        done = set()
+        for i, name_i in enumerate(group_names):
+            for j, name_j in enumerate(group_names):
+                if i >= j: continue
+                key = (min(str(name_i), str(name_j)), max(str(name_i), str(name_j)))
+                if key in done: continue
+                done.add(key)
+                p_val = float(dunn_res.loc[str(name_i), str(name_j)])
+                results.append({
+                    "comparison": f"{name_i} vs {name_j}",
+                    "p_value_holm": round(p_val, 6),
+                    "significant": p_val < 0.05
+                })
+        return {"method": "Dunn (Holm)", "n_comparisons": n_comparisons, "comparisons": results}
+    except ImportError:
+        pass
+    except Exception as e:
+        print(f"Dunn's test fallback: {e}")
+
+    # Fallback: pairwise Mann-Whitney with Holm correction
+    from statsmodels.stats.multitest import multipletests
+    raw_pvals = []
+    comparison_data = []
+
     for i in range(len(groups)):
         for j in range(i + 1, len(groups)):
             g1, g2 = groups[i], groups[j]
             if len(g1) >= 1 and len(g2) >= 1:
                 res = stats.mannwhitneyu(g1, g2)
-                p_corrected = min(res.pvalue * n_comparisons, 1.0)
-                
-                results.append({
-                    "comparison": f"{group_names[i]} vs {group_names[j]}",
-                    "u_statistic": round(float(res.statistic), 4),
-                    "p_value_raw": round(float(res.pvalue), 6),
-                    "p_value_bonferroni": round(float(p_corrected), 6),
-                    "significant": p_corrected < 0.05
-                })
-    
-    return {"method": "Bonferroni", "alpha_adjustado": round(0.05 / n_comparisons, 6), "n_comparisons": n_comparisons, "comparisons": results}
+                n1, n2 = len(g1), len(g2)
+                r_rb = 1 - 2 * res.statistic / (n1 * n2) if n1 * n2 > 0 else 0
+                raw_pvals.append(float(res.pvalue))
+                comparison_data.append((i, j, float(res.statistic), r_rb))
+
+    results = []
+    if raw_pvals:
+        _, corrected_pvals, _, _ = multipletests(raw_pvals, method='holm')
+        for idx, (i, j, u_stat, r_rb) in enumerate(comparison_data):
+            results.append({
+                "comparison": f"{group_names[i]} vs {group_names[j]}",
+                "u_statistic": round(u_stat, 4),
+                "p_value_raw": round(raw_pvals[idx], 6),
+                "p_value_holm": round(float(corrected_pvals[idx]), 6),
+                "significant": corrected_pvals[idx] < 0.05,
+                "rank_biserial_r": round(r_rb, 4)
+            })
+
+    return {"method": "Mann-Whitney (Holm)", "n_comparisons": n_comparisons, "comparisons": results}
 
 def estimate_achieved_power(test_type, **kwargs):
-    """Estima poder estatístico alcançado (aproximação)."""
+    """Estima poder estatístico alcançado usando statsmodels (exato)."""
     try:
         if test_type in ("ttest_paired", "ttest_ind"):
             n = kwargs.get("n", 0)
             d = kwargs.get("cohens_d", 0)
             if n > 2 and d:
-                # Approximation using normal distribution
-                nc = abs(d) * np.sqrt(n / 2)
-                power = stats.norm.cdf(nc - 1.96)
+                from statsmodels.stats.power import TTestIndPower, TTestPower
+                if test_type == "ttest_ind":
+                    power = TTestIndPower().solve_power(effect_size=abs(d), nobs1=n, ratio=1.0, alpha=0.05)
+                else:
+                    power = TTestPower().solve_power(effect_size=abs(d), nobs=n, alpha=0.05)
                 return round(float(max(0, min(1, power))), 4)
         
         elif test_type in ("anova", "kruskal"):
@@ -2425,6 +3065,13 @@ def generate_interpretation(test_type, stat, p_val, effect_size=None, post_hoc=N
     if effect_size:
         if "cohens_d" in effect_size:
             interpretations.append(f"Tamanho do efeito: d={effect_size['cohens_d']:.2f} ({effect_size['interpretation']}).")
+        elif "rank_biserial_r" in effect_size:
+            r_val = effect_size['rank_biserial_r']
+            interpretations.append(f"Tamanho do efeito: r={r_val:.2f} ({effect_size['interpretation']}).")
+        elif "partial_eta_squared" in effect_size:
+            interpretations.append(f"Tamanho do efeito: η²p={effect_size['partial_eta_squared']:.4f} ({effect_size['interpretation']}).")
+        elif "epsilon_squared" in effect_size:
+            interpretations.append(f"Tamanho do efeito: ε²={effect_size['epsilon_squared']:.4f} ({effect_size['interpretation']}).")
         elif "eta_squared" in effect_size:
             interpretations.append(f"Tamanho do efeito: η²={effect_size['eta_squared']:.4f} ({effect_size['interpretation']}).")
         elif "r_squared" in effect_size:
@@ -2491,7 +3138,7 @@ def pg_ttest_ind(g1, g2):
     
     res = stats.ttest_ind(g1, g2)
     n1, n2 = len(g1), len(g2)
-    s1, s2 = np.var(g1, ddof=1), np.var(g2, np.var(g2, ddof=1) if len(g2) > 1 else 0)
+    s1, s2 = np.var(g1, ddof=1), np.var(g2, ddof=1)
     s_pooled = np.sqrt(((n1-1)*s1 + (n2-1)*s2) / (n1+n2-2)) if (n1+n2-2) > 0 else 0
     cohens_d = float((np.mean(g1) - np.mean(g2)) / s_pooled) if s_pooled > 0 else 0
     return {
@@ -2539,50 +3186,104 @@ def pg_ttest_paired(a, b):
         "engine": "scipy"
     }
 
+def interpret_cles(cles):
+    """Interpreta CLES (McGraw & Wong 1992)."""
+    if cles is None: return "Indeterminado"
+    c = abs(cles - 0.5) + 0.5  # normalize to always be >= 0.5
+    if c >= 0.71: return "Grande"
+    if c >= 0.64: return "Médio"
+    if c >= 0.56: return "Pequeno"
+    return "Desprezível"
+
+def interpret_rank_biserial(r):
+    """Interpreta rank-biserial r (mesmos limiares de Cohen para r)."""
+    abs_r = abs(r) if r is not None else 0
+    if abs_r >= 0.5: return "Grande"
+    if abs_r >= 0.3: return "Médio"
+    if abs_r >= 0.1: return "Pequeno"
+    return "Desprezível"
+
 def pg_mannwhitney(g1, g2):
-    """Mann-Whitney U com Pingouin (fallback: scipy)."""
+    """Mann-Whitney U com Pingouin (fallback: scipy). Effect size: rank-biserial r + CLES."""
+    n1, n2 = len(g1), len(g2)
     try:
-        if PINGOUIN_AVAILABLE and len(g1) >= 1 and len(g2) >= 1:
+        if PINGOUIN_AVAILABLE and n1 >= 1 and n2 >= 1:
             result = pg.mwu(g1, g2)
+            u_val = result["U_val"].values[0]
+            cles_val = round_res(result["CLES"].values[0]) if "CLES" in result.columns else None
+            rank_biserial_r = round_res(1 - 2 * u_val / (n1 * n2)) if n1 * n2 > 0 else None
             return {
-                "statistic": round_res(result["U_val"].values[0]),
+                "statistic": round_res(u_val),
                 "p_value": round_res(safe_get_pval(result)),
-                "cohens_d": round_res(result["CLES"].values[0]) if "CLES" in result.columns else None,
+                "rank_biserial_r": rank_biserial_r,
+                "rank_biserial_interpretation": interpret_rank_biserial(rank_biserial_r),
+                "cles": cles_val,
+                "cles_interpretation": interpret_cles(cles_val),
                 "engine": "pingouin"
             }
     except Exception as e:
         print(f"Pingouin mwu fallback: {e}")
-    
+
     res = stats.mannwhitneyu(g1, g2)
+    u_val = res.statistic
+    rank_biserial_r = round_res(1 - 2 * u_val / (n1 * n2)) if n1 * n2 > 0 else None
     return {
-        "statistic": round_res(res.statistic),
+        "statistic": round_res(u_val),
         "p_value": round_res(res.pvalue),
-        "cohens_d": None,
+        "rank_biserial_r": rank_biserial_r,
+        "rank_biserial_interpretation": interpret_rank_biserial(rank_biserial_r),
+        "cles": None,
+        "cles_interpretation": None,
         "engine": "scipy"
     }
 
 def pg_wilcoxon(a, b):
-    """Wilcoxon pareado com Pingouin (fallback: scipy)."""
+    """Wilcoxon pareado com Pingouin (fallback: scipy). Effect size: matched rank-biserial r + CLES."""
     try:
         if PINGOUIN_AVAILABLE and len(a) >= 2:
             result = pg.wilcoxon(a, b)
+            cles_val = round_res(result["CLES"].values[0]) if "CLES" in result.columns else None
+            # Matched-pairs rank-biserial correlation
+            diff = np.array(a) - np.array(b)
+            diff_nonzero = diff[diff != 0]
+            n_nz = len(diff_nonzero)
+            if n_nz > 0:
+                ranks = stats.rankdata(np.abs(diff_nonzero))
+                r_plus = np.sum(ranks[diff_nonzero > 0])
+                r_minus = np.sum(ranks[diff_nonzero < 0])
+                matched_r = round_res((r_plus - r_minus) / (r_plus + r_minus)) if (r_plus + r_minus) > 0 else 0.0
+            else:
+                matched_r = 0.0
             return {
                 "statistic": round_res(result["W_val"].values[0]),
                 "p_value": round_res(safe_get_pval(result)),
-                "cohens_d": round_res(result["CLES"].values[0]) if "CLES" in result.columns else None,
+                "rank_biserial_r": matched_r,
+                "rank_biserial_interpretation": interpret_rank_biserial(matched_r),
+                "cles": cles_val,
+                "cles_interpretation": interpret_cles(cles_val),
                 "engine": "pingouin"
             }
     except Exception as e:
         print(f"Pingouin wilcoxon fallback: {e}")
-    
+
     res = stats.wilcoxon(a, b)
-    diff = a - b
-    std_diff = np.std(diff, ddof=1)
-    cohens_d = float(np.mean(diff) / std_diff) if std_diff > 0 else 0
+    diff = np.array(a) - np.array(b)
+    diff_nonzero = diff[diff != 0]
+    n_nz = len(diff_nonzero)
+    if n_nz > 0:
+        ranks = stats.rankdata(np.abs(diff_nonzero))
+        r_plus = np.sum(ranks[diff_nonzero > 0])
+        r_minus = np.sum(ranks[diff_nonzero < 0])
+        matched_r = round_res((r_plus - r_minus) / (r_plus + r_minus)) if (r_plus + r_minus) > 0 else 0.0
+    else:
+        matched_r = 0.0
     return {
         "statistic": round(float(res.statistic), 4),
         "p_value": round(float(res.pvalue), 4),
-        "cohens_d": round(cohens_d, 4),
+        "rank_biserial_r": matched_r,
+        "rank_biserial_interpretation": interpret_rank_biserial(matched_r),
+        "cles": None,
+        "cles_interpretation": None,
         "engine": "scipy"
     }
 
@@ -2591,10 +3292,14 @@ def pg_anova(df_in, dv, between):
     try:
         if PINGOUIN_AVAILABLE and len(df_in) >= 3:
             result = pg.anova(data=df_in, dv=dv, between=between, detailed=True)
+            np2_val = round_res(result["np2"].values[0]) if "np2" in result.columns else None
             return {
                 "statistic": round_res(result["F"].values[0]),
                 "p_value": round_res(safe_get_pval(result)),
-                "eta_squared": round_res(result["np2"].values[0]) if "np2" in result.columns else None,
+                "partial_eta_squared": np2_val,
+                "eta_squared": np2_val,  # backward compat for frontend
+                "df_between": int(result["ddof1"].values[0]) if "ddof1" in result.columns else None,
+                "df_within": int(result["ddof2"].values[0]) if "ddof2" in result.columns else None,
                 "power": round_res(result["power"].values[0]) if "power" in result.columns else None,
                 "engine": "pingouin"
             }
@@ -2626,14 +3331,18 @@ def pg_kruskal(df_in, dv, between):
     try:
         if PINGOUIN_AVAILABLE and len(df_in) >= 3:
             result = pg.kruskal(data=df_in, dv=dv, between=between)
-            # Pingouin >=0.5 retorna 'eta2'; versões antigas retornavam 'np2'
-            eta2_col = "eta2" if "eta2" in result.columns else "np2" if "np2" in result.columns else None
-            eta2_val = float(result[eta2_col].values[0]) if eta2_col else 0.0
-            
+            H = float(result["H"].values[0])
+            groups = [g.dropna().values for _, g in df_in.groupby(between)[dv]]
+            groups = [g for g in groups if len(g) >= 1]
+            N = sum(len(g) for g in groups)
+            k = len(groups)
+            epsilon_sq = max(0.0, (H - k + 1) / (N - k)) if (N - k) > 0 else 0
+
             return {
-                "statistic": round_res(result["H"].values[0]),
+                "statistic": round_res(H),
                 "p_value": round_res(safe_get_pval(result)),
-                "eta_squared": round_res(eta2_val),
+                "epsilon_squared": round_res(epsilon_sq),
+                "eta_squared": round_res(epsilon_sq),  # backward compat for frontend
                 "engine": "pingouin"
             }
     except Exception as e:
@@ -2644,16 +3353,16 @@ def pg_kruskal(df_in, dv, between):
     groups = [g for g in groups if len(g) >= 1]
     if len(groups) >= 2:
         res = stats.kruskal(*groups)
-        all_vals = np.concatenate(groups)
-        grand_mean = np.mean(all_vals)
-        ss_between = sum(len(g) * (np.mean(g) - grand_mean)**2 for g in groups)
-        ss_within = sum(sum((x - np.mean(g))**2 for x in g) for g in groups)
-        ss_total = ss_between + ss_within
-        eta_sq = float(ss_between / ss_total) if ss_total > 0 else 0
+        N = sum(len(g) for g in groups)
+        k = len(groups)
+        H = float(res.statistic)
+        epsilon_sq = (H - k + 1) / (N - k) if (N - k) > 0 else 0
+        epsilon_sq = max(0.0, epsilon_sq)
         return {
-            "statistic": round(float(res.statistic), 4),
+            "statistic": round(H, 4),
             "p_value": round(float(res.pvalue), 4),
-            "eta_squared": round(eta_sq, 4),
+            "epsilon_squared": round(epsilon_sq, 4),
+            "eta_squared": round(epsilon_sq, 4),  # backward compat for frontend
             "engine": "scipy"
         }
     return None
@@ -2721,6 +3430,237 @@ def pg_spearman(x, y):
         "power": None,
         "engine": "scipy"
     }
+
+def pg_welch_ttest(g1, g2):
+    """Welch's T-Test (não assume variâncias iguais). Effect size: Hedges' g."""
+    try:
+        if PINGOUIN_AVAILABLE and len(g1) >= 2 and len(g2) >= 2:
+            result = pg.ttest(g1, g2, paired=False, correction=True)
+            ci95 = result["CI95"].values[0] if "CI95" in result.columns else [None, None]
+            d = round_res(result["cohen_d"].values[0]) if "cohen_d" in result.columns else None
+            n1, n2 = len(g1), len(g2)
+            correction = 1 - 3 / (4 * (n1 + n2) - 9) if (n1 + n2) > 4 else 1
+            hedges_g = round_res(d * correction) if d is not None else None
+            return {
+                "statistic": round_res(result["T"].values[0]),
+                "p_value": round_res(safe_get_pval(result)),
+                "ci_lower": round_res(ci95[0]),
+                "ci_upper": round_res(ci95[1]),
+                "hedges_g": hedges_g,
+                "cohens_d": d,
+                "df": round_res(result["dof"].values[0]) if "dof" in result.columns else None,
+                "power": round_res(result["power"].values[0]) if "power" in result.columns else None,
+                "engine": "pingouin"
+            }
+    except Exception as e:
+        print(f"Pingouin welch fallback: {e}")
+
+    res = stats.ttest_ind(g1, g2, equal_var=False)
+    n1, n2 = len(g1), len(g2)
+    s1, s2 = np.var(g1, ddof=1), np.var(g2, ddof=1)
+    s_pooled = np.sqrt(((n1-1)*s1 + (n2-1)*s2) / (n1+n2-2)) if (n1+n2-2) > 0 else 0
+    cohens_d = float((np.mean(g1) - np.mean(g2)) / s_pooled) if s_pooled > 0 else 0
+    correction = 1 - 3 / (4 * (n1 + n2) - 9) if (n1 + n2) > 4 else 1
+    hedges_g = cohens_d * correction
+    return {
+        "statistic": round_res(res.statistic),
+        "p_value": round_res(res.pvalue),
+        "ci_lower": None,
+        "ci_upper": None,
+        "hedges_g": round_res(hedges_g),
+        "cohens_d": round_res(cohens_d),
+        "df": None,
+        "power": None,
+        "engine": "scipy"
+    }
+
+def pg_welch_anova(df_in, dv, between):
+    """Welch's ANOVA (não assume variâncias iguais)."""
+    try:
+        if PINGOUIN_AVAILABLE and len(df_in) >= 3:
+            result = pg.welch_anova(data=df_in, dv=dv, between=between)
+            return {
+                "statistic": round_res(result["F"].values[0]),
+                "p_value": round_res(safe_get_pval(result)),
+                "df_between": round_res(result["ddof1"].values[0]) if "ddof1" in result.columns else None,
+                "df_within": round_res(result["ddof2"].values[0]) if "ddof2" in result.columns else None,
+                "engine": "pingouin"
+            }
+    except Exception as e:
+        print(f"Pingouin welch_anova fallback: {e}")
+
+    # Fallback: scipy Alexander-Govern
+    try:
+        groups = [g.dropna().values for _, g in df_in.groupby(between)[dv]]
+        groups = [g for g in groups if len(g) >= 2]
+        if len(groups) >= 2:
+            res = stats.alexandergovern(*groups)
+            return {
+                "statistic": round_res(res.statistic),
+                "p_value": round_res(res.pvalue),
+                "df_between": None,
+                "df_within": None,
+                "engine": "scipy"
+            }
+    except Exception as e:
+        print(f"Alexander-Govern fallback: {e}")
+    return None
+
+def pg_friedman(df_in, dv, within, subject):
+    """Friedman Test para medidas repetidas não-paramétricas (3+ tempos)."""
+    try:
+        if PINGOUIN_AVAILABLE:
+            result = pg.friedman(data=df_in, dv=dv, within=within, subject=subject)
+            # Kendall's W = chi2 / (n * (k - 1))
+            chi2_val = float(result["Q"].values[0]) if "Q" in result.columns else 0
+            groups = df_in[within].nunique()
+            n_subj = df_in[subject].nunique()
+            w = chi2_val / (n_subj * (groups - 1)) if n_subj > 0 and groups > 1 else 0
+            return {
+                "statistic": round_res(chi2_val),
+                "p_value": round_res(safe_get_pval(result)),
+                "kendall_w": round_res(w),
+                "engine": "pingouin"
+            }
+    except Exception as e:
+        print(f"Pingouin friedman fallback: {e}")
+
+    # Fallback: scipy
+    try:
+        groups_data = [df_in[df_in[within] == t][dv].values for t in sorted(df_in[within].unique())]
+        if len(groups_data) >= 3:
+            res = stats.friedmanchisquare(*groups_data)
+            k = len(groups_data)
+            n_subj = len(groups_data[0])
+            w = float(res.statistic) / (n_subj * (k - 1)) if n_subj > 0 and k > 1 else 0
+            return {
+                "statistic": round_res(res.statistic),
+                "p_value": round_res(res.pvalue),
+                "kendall_w": round_res(w),
+                "engine": "scipy"
+            }
+    except Exception as e:
+        print(f"Friedman scipy fallback: {e}")
+    return None
+
+def pg_rm_anova(df_in, dv, within, subject):
+    """Repeated Measures ANOVA com correção de Greenhouse-Geisser."""
+    try:
+        if PINGOUIN_AVAILABLE:
+            result = pg.rm_anova(data=df_in, dv=dv, within=within, subject=subject, correction=True)
+            np2_val = round_res(result["np2"].values[0]) if "np2" in result.columns else None
+            eps_val = round_res(result["eps"].values[0]) if "eps" in result.columns else None
+            return {
+                "statistic": round_res(result["F"].values[0]),
+                "p_value": round_res(safe_get_pval(result)),
+                "partial_eta_squared": np2_val,
+                "eta_squared": np2_val,  # backward compat
+                "greenhouse_geisser_eps": eps_val,
+                "df_between": round_res(result["ddof1"].values[0]) if "ddof1" in result.columns else None,
+                "df_within": round_res(result["ddof2"].values[0]) if "ddof2" in result.columns else None,
+                "engine": "pingouin"
+            }
+    except Exception as e:
+        print(f"RM-ANOVA error: {e}")
+    return None
+
+def pg_mcnemar(contingency_2x2):
+    """McNemar test para comparação antes/depois de desfecho categórico binário."""
+    try:
+        from statsmodels.stats.contingency_tables import mcnemar
+        table = np.array(contingency_2x2)
+        result = mcnemar(table, exact=table.sum() < 25)
+        # Odds ratio dos pares discordantes
+        b, c = table[0, 1], table[1, 0]
+        odds_ratio = b / c if c > 0 else float('inf')
+        return {
+            "statistic": round_res(result.statistic),
+            "p_value": round_res(result.pvalue),
+            "odds_ratio": round_res(odds_ratio),
+            "discordant_pairs": {"b": int(b), "c": int(c)},
+            "engine": "statsmodels"
+        }
+    except Exception as e:
+        print(f"McNemar error: {e}")
+    return None
+
+def pg_point_biserial(binary_var, continuous_var):
+    """Point-Biserial Correlation (variável binária natural x contínua)."""
+    try:
+        r, p = stats.pointbiserialr(binary_var, continuous_var)
+        return {
+            "statistic": round_res(r),
+            "p_value": round_res(p),
+            "r_squared": round_res(r ** 2),
+            "interpretation": interpret_r_squared(r ** 2),
+            "engine": "scipy"
+        }
+    except Exception as e:
+        print(f"Point-biserial error: {e}")
+    return None
+
+def comprehensive_normality_check(data):
+    """Verificação de normalidade multi-teste (Fase 3.7 + 5.1).
+    Retorna: Shapiro-Wilk + D'Agostino-Pearson + skewness/kurtosis + conclusão."""
+    n = len(data)
+    if n < 3:
+        return {"conclusion": "unknown", "reason": "n < 3"}
+
+    results = {}
+    votes_normal = 0
+    votes_total = 0
+
+    # Shapiro-Wilk (n <= 5000)
+    if n <= 5000:
+        try:
+            sw_stat, sw_p = stats.shapiro(data)
+            results["shapiro_wilk"] = {"statistic": round(float(sw_stat), 4), "p_value": round(float(sw_p), 6)}
+            votes_total += 1
+            if sw_p > 0.05:
+                votes_normal += 1
+        except:
+            pass
+
+    # D'Agostino-Pearson (n >= 20)
+    if n >= 20:
+        try:
+            dag_stat, dag_p = stats.normaltest(data)
+            results["dagostino_pearson"] = {"statistic": round(float(dag_stat), 4), "p_value": round(float(dag_p), 6)}
+            votes_total += 1
+            if dag_p > 0.05:
+                votes_normal += 1
+        except:
+            pass
+
+    # Skewness + Kurtosis
+    try:
+        skew = float(stats.skew(data))
+        kurt = float(stats.kurtosis(data))
+        results["skewness"] = round(skew, 4)
+        results["kurtosis"] = round(kurt, 4)
+        votes_total += 1
+        if abs(skew) < 2 and abs(kurt) < 7:
+            votes_normal += 1
+            results["practical_normality"] = True
+        else:
+            results["practical_normality"] = False
+    except:
+        pass
+
+    # Majority vote
+    if votes_total == 0:
+        conclusion = "unknown"
+    elif votes_normal > votes_total / 2:
+        conclusion = "normal"
+    elif votes_normal == votes_total / 2 and n > 50:
+        conclusion = "aprox-normal"
+    else:
+        conclusion = "nao-normal"
+
+    results["conclusion"] = conclusion
+    results["votes_normal"] = votes_normal
+    results["votes_total"] = votes_total
+    return results
 
 def pg_fisher_exact(contingency):
     """Teste Exato de Fisher para tabela 2x2."""
@@ -3023,7 +3963,9 @@ async def execute_protocol_v8(file: UploadFile = File(...), protocol: str = Form
                         median_val = float(np.median(diff))
                         iqr_val = f"{np.percentile(diff, 25):.2f} - {np.percentile(diff, 75):.2f}"
                         ci = compute_ci_95(diff)
-                        effect_size = {"cohens_d": res.get("cohens_d", 0), "interpretation": interpret_cohens_d(res.get("cohens_d", 0))}
+                        r_val = res.get("rank_biserial_r", 0)
+                        effect_size = {"rank_biserial_r": r_val, "interpretation": res.get("rank_biserial_interpretation", interpret_rank_biserial(r_val)),
+                                       "cles": res.get("cles"), "cles_interpretation": res.get("cles_interpretation")}
                         chart_data = {"type": "histogram", "values": [sanitize_chart_value(v) for v in diff if sanitize_chart_value(v) is not None], "var_name": f"Diferença ({col_a} - {col_b})"}
                         viz = decide_visualization("wilcoxon")
                         
@@ -3236,7 +4178,9 @@ async def execute_protocol_v8(file: UploadFile = File(...), protocol: str = Form
                             if len(g1) >= 1 and len(g2) >= 1:
                                 res = pg_mannwhitney(g1, g2)
                                 stat, p_val = res["statistic"], res["p_value"]
-                                effect_size = {"cohens_d": res.get("cohens_d", 0), "interpretation": interpret_cohens_d(res.get("cohens_d", 0))}
+                                r_val = res.get("rank_biserial_r", 0)
+                                effect_size = {"rank_biserial_r": r_val, "interpretation": res.get("rank_biserial_interpretation", interpret_rank_biserial(r_val)),
+                                               "cles": res.get("cles"), "cles_interpretation": res.get("cles_interpretation")}
                             else:
                                 raise ValueError("Grupos com menos de 1 observação.")
                         else:
@@ -3248,6 +4192,35 @@ async def execute_protocol_v8(file: UploadFile = File(...), protocol: str = Form
                             else:
                                 raise ValueError("Grupos insuficientes.")
                     
+                    elif "Welch" in test and "ANOVA" in test:
+                        pg_res = pg_welch_anova(df_curr, outcome_col_pair, predictor)
+                        if pg_res:
+                            stat, p_val = pg_res["statistic"], pg_res["p_value"]
+                            effect_size = compute_effect_size("anova", groups=[group_values[str(g)] for g in unique_groups if str(g) in group_values])
+                        else:
+                            raise ValueError("Grupos insuficientes para Welch's ANOVA.")
+
+                    elif "Welch" in test and ("T-Test" in test or "T " in test):
+                        if n_groups == 2:
+                            g1 = group_values.get(str(unique_groups[0]), np.array([]))
+                            g2 = group_values.get(str(unique_groups[1]), np.array([]))
+                            if len(g1) >= 2 and len(g2) >= 2:
+                                res = pg_welch_ttest(g1, g2)
+                                stat, p_val = res["statistic"], res["p_value"]
+                                effect_size = {"cohens_d": res.get("hedges_g") or res.get("cohens_d", 0),
+                                               "interpretation": interpret_cohens_d(res.get("hedges_g") or res.get("cohens_d", 0))}
+                                if res.get("power"): effect_size["achieved_power"] = res["power"]
+                            else:
+                                raise ValueError("Grupos com menos de 2 observações cada.")
+                        else:
+                            test = "Welch's ANOVA (auto-switch)"
+                            pg_res = pg_welch_anova(df_curr, outcome_col_pair, predictor)
+                            if pg_res:
+                                stat, p_val = pg_res["statistic"], pg_res["p_value"]
+                                effect_size = compute_effect_size("anova", groups=[group_values[str(g)] for g in unique_groups if str(g) in group_values])
+                            else:
+                                raise ValueError("Grupos insuficientes para Welch's ANOVA.")
+
                     elif "ANOVA" in test:
                         pg_res = pg_anova(df_curr, outcome_col_pair, predictor)
                         if pg_res:
@@ -3256,7 +4229,7 @@ async def execute_protocol_v8(file: UploadFile = File(...), protocol: str = Form
                             if pg_res.get("power"): effect_size["achieved_power"] = pg_res["power"]
                         else:
                             raise ValueError("Grupos insuficientes para ANOVA.")
-                    
+
                     elif "Kruskal" in test:
                         # Redireciona para função centralizada que trata NAN,
                         # escolhe Mann-Whitney U para 2 grupos e KW para 3+
@@ -3319,7 +4292,7 @@ async def execute_protocol_v8(file: UploadFile = File(...), protocol: str = Form
                             else:
                                 chi2, p, dof, ex = stats.chi2_contingency(contingency)
                                 stat, p_val = chi2, p
-                                effect_size = compute_effect_size("chi2", chi2=chi2, n_total=int(contingency.sum().sum()))
+                                effect_size = compute_effect_size("chi2", chi2=chi2, n_total=int(contingency.sum().sum()), min_dim=min(contingency.shape) - 1)
                                 
                                 contingency_pct = pd.crosstab(df_curr[predictor], df_curr[outcome_col_pair], normalize='index') * 100
                                 contingency_total = pd.crosstab(df_curr[predictor], df_curr[outcome_col_pair], margins=True)
@@ -3463,7 +4436,13 @@ async def execute_protocol_v8(file: UploadFile = File(...), protocol: str = Form
                         all_groups_list = [group_values[str(g)] for g in unique_groups if len(group_values.get(str(g), [])) >= 1]
                         all_group_names = [str(g) for g in unique_groups if len(group_values.get(str(g), [])) >= 1]
                         if "ANOVA" in test:
-                            post_hoc = compute_post_hoc_anova(all_groups_list, all_group_names)
+                            # Check homogeneity of variance for post-hoc method selection
+                            try:
+                                _, levene_p = stats.levene(*all_groups_list)
+                                eq_var = levene_p >= 0.05
+                            except:
+                                eq_var = True
+                            post_hoc = compute_post_hoc_anova(all_groups_list, all_group_names, equal_var=eq_var)
                         elif "Kruskal" in test:
                             post_hoc = compute_post_hoc_kruskal(all_groups_list, all_group_names)
                     

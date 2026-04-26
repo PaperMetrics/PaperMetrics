@@ -164,7 +164,7 @@ function MetaAnalysisContent({ session }) {
     try {
       const res = await fetch(`${API_URL}/api/meta/pipeline`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${session?.sessionToken}` },
+        headers: { 'Authorization': `Bearer ${session?.token}` },
         body: formData
       })
 
@@ -1158,7 +1158,7 @@ function RocCurveContent({ session }) {
 
         const res = await fetch(`${API_URL}/api/meta/roc`, {
           method: 'POST',
-          headers: { 'Authorization': `Bearer ${session?.sessionToken}` },
+          headers: { 'Authorization': `Bearer ${session?.token}` },
           body: formData
         })
 
@@ -1185,7 +1185,7 @@ function RocCurveContent({ session }) {
 
         const res = await fetch(`${API_URL}/api/meta/roc`, {
           method: 'POST',
-          headers: { 'Authorization': `Bearer ${session?.sessionToken}` },
+          headers: { 'Authorization': `Bearer ${session?.token}` },
           body: formData
         })
 

@@ -106,7 +106,7 @@ export default function ChartGeneratorModal({ isOpen, onClose, chartData, varNam
         await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/projects/${activeProjectId}/charts`, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${session?.sessionToken}`
+            'Authorization': `Bearer ${session?.token}`
           },
           body: formData
         })

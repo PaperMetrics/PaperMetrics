@@ -35,7 +35,7 @@ function SidebarItem({ to, icon, label }) {
 }
 
 export default function Sidebar() {
-  const { user, signOut } = useAuth()
+  const { user, signOut, isAdmin } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const [showNewProject, setShowNewProject] = useState(false)
@@ -105,6 +105,17 @@ export default function Sidebar() {
             <SidebarItem to={to} icon={icon} label={label} />
           </motion.div>
         ))}
+
+        {isAdmin && (
+          <motion.div
+            initial={{ opacity: 0, x: -8 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.04 * NAV.length, duration: 0.25 }}
+            className="mt-1 pt-1 border-t border-white/5"
+          >
+            <SidebarItem to="/admin" icon="admin_panel_settings" label="Admin" />
+          </motion.div>
+        )}
       </div>
 
       {/* Spacer */}

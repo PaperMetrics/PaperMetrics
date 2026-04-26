@@ -13,6 +13,7 @@ import Profile from './pages/Profile'
 import Settings from './pages/Settings'
 import Login from './pages/Login'
 import Landing from './pages/Landing'
+import Admin from './pages/Admin'
 import { SciStatProvider } from './SciStatContext'
 import { AuthProvider } from './AuthContext'
 import ProtectedRoute from './components/ProtectedRoute'
@@ -70,7 +71,7 @@ function App() {
             { path: '/power-calculator', element: <PowerCalculator /> },
             { path: '/archive', element: <Archive /> },
             { path: '/profile', element: <Profile /> },
-            { path: '/settings', element: <Settings /> }
+            { path: '/settings', element: <Settings /> },
           ].map((r) => (
             <Route 
               key={r.path}
@@ -84,6 +85,14 @@ function App() {
               } 
             />
           ))}
+
+          <Route path="/admin" element={
+            <ProtectedRoute requireAdmin>
+              <Layout dark={dark} setDark={setDark}>
+                <Admin />
+              </Layout>
+            </ProtectedRoute>
+          } />
         </Routes>
       </SciStatProvider>
     </AuthProvider>
