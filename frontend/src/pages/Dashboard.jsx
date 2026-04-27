@@ -327,7 +327,7 @@ function isPvalNA(testLabel) {
 
 export default function Dashboard() {
   const { session, isAuthenticated } = useAuth()
-  const { history, trials, loading: dataLoading } = useSciStat()
+  const { history, trials, projects, refresh, loading: dataLoading } = useSciStat()
   const [loading, setLoading] = useState(false)
   const [results, setResults] = useState([])
   const [selectedTests, setSelectedTests] = useState({})
@@ -370,6 +370,74 @@ export default function Dashboard() {
   const [confirmedTransformations, setConfirmedTransformations] = useState([])
   const [pendingColumnSamples, setPendingColumnSamples] = useState([])
   const [derivedCandidates, setDerivedCandidates] = useState([])
+  // Salvar & Nomear análises
+  const [currentAnalysisId, setCurrentAnalysisId] = useState(null)
+  const [analysisTitle, setAnalysisTitle] = useState('')
+  const [showTitleInput, setShowTitleInput] = useState(false)
+  const [showProjectPicker, setShowProjectPicker] = useState(false)
+  const [savedToProject, setSavedToProject] = useState(null)
+  const [draftBanner, setDraftBanner] = useState(null)
+
+  // ── Draft System: salvar/restaurar estado da análise ──
+  const DRAFT_KEY = 'pm_analysis_draft'
+
+  const saveDraft = useCallback((step) => {
+    try {
+      const draft = {
+        step,
+        filename: pendingFile?.name || fileData?.formData?.get('file')?.name || '',
+        columnOptions,
+        domainResolutions,
+        confirmedTransformations,
+        outcomeCol: analysisProtocol?.outcome || null,
+        analysisProtocol,
+        derivedCandidates,
+        savedAt: new Date().toISOString()
+      }
+      localStorage.setItem(DRAFT_KEY, JSON.stringify(draft))
+    } catch (e) {
+      console.warn('[Draft] Failed to save:', e)
+    }
+  }, [pendingFile, fileData, columnOptions, domainResolutions, confirmedTransformations, analysisProtocol, derivedCandidates])
+
+  const clearDraft = useCallback(() => {
+    localStorage.removeItem(DRAFT_KEY)
+    setDraftBanner(null)
+  }, [])
+
+  // Check for existing draft on mount
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY)
+      if (!raw) return
+      const draft = JSON.parse(raw)
+      const age = Date.now() - new Date(draft.savedAt).getTime()
+      if (age > 24 * 60 * 60 * 1000) { clearDraft(); return }
+      setDraftBanner(draft)
+    } catch { clearDraft() }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const resumeDraft = useCallback((draft) => {
+    if (draft.columnOptions) setColumnOptions(draft.columnOptions)
+    if (draft.domainResolutions) setDomainResolutions(draft.domainResolutions)
+    if (draft.confirmedTransformations) setConfirmedTransformations(draft.confirmedTransformations)
+    if (draft.derivedCandidates) setDerivedCandidates(draft.derivedCandidates)
+    if (draft.analysisProtocol) {
+      setAnalysisProtocol(draft.analysisProtocol)
+      if (draft.step === 'protocol_review') setShowReview(true)
+    }
+    if (draft.step === 'outcome_selection') setShowOutcomeSelector(true)
+    setDraftBanner(null)
+  }, [])
+
+  // beforeunload guard
+  useEffect(() => {
+    const inProgress = (fileData || pendingFile || showReview || showOutcomeSelector || showDomainReview) && results.length === 0
+    if (!inProgress) return
+    const handler = (e) => { e.preventDefault(); e.returnValue = '' }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [fileData, pendingFile, showReview, showOutcomeSelector, showDomainReview, results])
 
   useEffect(() => {
     const handleEsc = (e) => {
@@ -427,7 +495,52 @@ export default function Dashboard() {
     setValidationReport(null)
     setActiveReportTab('all')
     setPremiumAnalysis(null)
+    setCurrentAnalysisId(null)
+    setAnalysisTitle('')
+    setShowTitleInput(false)
+    setShowProjectPicker(false)
+    setSavedToProject(null)
+    clearDraft()
     if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  const handleRenameAnalysis = async (title) => {
+    if (!currentAnalysisId || !title.trim()) return
+    const API_URL = import.meta.env.VITE_API_BASE_URL
+    try {
+      const res = await fetch(`${API_URL}/api/history/${currentAnalysisId}`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${session?.token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: title.trim() })
+      })
+      if (res.ok) {
+        setAnalysisTitle(title.trim())
+        setShowTitleInput(false)
+        refresh()
+      }
+    } catch (err) {
+      console.error('Failed to rename analysis:', err)
+    }
+  }
+
+  const handleSaveToProject = async (projectId) => {
+    if (!currentAnalysisId || !projectId) return
+    const API_URL = import.meta.env.VITE_API_BASE_URL
+    try {
+      const res = await fetch(`${API_URL}/api/projects/${projectId}/analyses`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${session?.token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ history_id: currentAnalysisId })
+      })
+      if (res.ok) {
+        const proj = projects.find(p => p.id === projectId)
+        setSavedToProject(proj?.title || 'Projeto')
+        setShowProjectPicker(false)
+        refresh()
+      }
+    } catch (err) {
+      console.error('Failed to save to project:', err)
+    }
   }
 
   const runPremiumAnalysis = async () => {
@@ -682,7 +795,8 @@ export default function Dashboard() {
     
     setShowDomainReview(false)
     setShowOutcomeSelector(true)
-  }, [columnOptions, applyDomainTransformations])
+    saveDraft('outcome_selection')
+  }, [columnOptions, applyDomainTransformations, saveDraft])
 
   const handleDomainReviewSkip = useCallback(() => {
     // Mesmo pulando a revisão, garantir que variáveis derivadas apareçam no OutcomeSelector
@@ -691,7 +805,8 @@ export default function Dashboard() {
     }
     setShowDomainReview(false)
     setShowOutcomeSelector(true)
-  }, [derivedCandidates, addDerivedCandidatesToColumns])
+    saveDraft('outcome_selection')
+  }, [derivedCandidates, addDerivedCandidatesToColumns, saveDraft])
 
   const handleTeachDomain = useCallback(async (payload) => {
     const headers = { 'Authorization': `Bearer ${session?.token}`, 'Content-Type': 'application/json' }
@@ -787,6 +902,20 @@ export default function Dashboard() {
           meta: protocolData.meta || null
         })
         setShowReview(true)
+        // Save draft with protocol ready
+        try {
+          localStorage.setItem(DRAFT_KEY, JSON.stringify({
+            step: 'protocol_review',
+            filename: pendingFile?.name || '',
+            columnOptions,
+            domainResolutions,
+            confirmedTransformations,
+            outcomeCol: protocolData.outcome,
+            analysisProtocol: { items: protocolData.protocol, outcome: protocolData.outcome, meta: protocolData.meta || null },
+            derivedCandidates,
+            savedAt: new Date().toISOString()
+          }))
+        } catch (e) { console.warn('[Draft] save failed:', e) }
       }
 
       const pendingFormData = new FormData()
@@ -854,7 +983,12 @@ export default function Dashboard() {
         const resultsData = await execRes.json()
         setResults(resultsData.results || [])
         setValidationReport(resultsData.validation || null)
+        setCurrentAnalysisId(resultsData.analysis_id || null)
+        setAnalysisTitle('')
+        setSavedToProject(null)
         setShowReview(false)
+        clearDraft()
+        refresh()
       }
     } catch (err) {
       alert(`Falha: ${err.message}`);
@@ -1133,7 +1267,74 @@ export default function Dashboard() {
         <h1 className="text-2xl sm:text-3xl font-semibold text-text-main">Painel de Análise</h1>
         <p className="text-sm text-text-muted font-medium">Envie seus dados e receba análises estatísticas completas com interpretação automática.</p>
       </header>
+
+      {/* Step Indicator */}
+      {(pendingFile || fileData || showDomainReview || showOutcomeSelector || showReview || results.length > 0) && (
+        <div className="flex items-center justify-center gap-0 py-2">
+          {[
+            { label: 'Upload', icon: 'cloud_upload', done: !!pendingFile || !!fileData, active: !showDomainReview && !showOutcomeSelector && !showReview && results.length === 0 },
+            { label: 'Dominio', icon: 'category', done: !!confirmedTransformations.length || showOutcomeSelector || showReview || results.length > 0, active: showDomainReview },
+            { label: 'Desfecho', icon: 'target', done: !!analysisProtocol?.outcome, active: showOutcomeSelector },
+            { label: 'Protocolo', icon: 'checklist', done: results.length > 0, active: showReview },
+            { label: 'Resultados', icon: 'analytics', done: false, active: results.length > 0 },
+          ].map((step, i, arr) => (
+            <div key={step.label} className="flex items-center">
+              <div className="flex flex-col items-center gap-1">
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${
+                  step.active ? 'bg-primary text-white shadow-lg shadow-primary/30' :
+                  step.done ? 'bg-primary/20 text-primary' :
+                  'bg-surface border border-border-subtle text-text-muted'
+                }`}>
+                  <span className="material-symbols-rounded text-sm">{step.done && !step.active ? 'check' : step.icon}</span>
+                </div>
+                <span className={`text-[8px] font-semibold tracking-wide ${step.active ? 'text-primary' : step.done ? 'text-text-muted' : 'text-text-muted/50'}`}>{step.label}</span>
+              </div>
+              {i < arr.length - 1 && (
+                <div className={`w-8 sm:w-12 h-px mx-1 mb-4 ${step.done ? 'bg-primary/40' : 'bg-border-subtle'}`} />
+              )}
+            </div>
+          ))}
+        </div>
+      )}
       
+      {/* Draft Resume Banner */}
+      {draftBanner && !fileData && !pendingFile && results.length === 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="glass-card rounded-xl p-4 border border-primary/20 bg-primary/5 flex items-center justify-between gap-4"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
+              <span className="material-symbols-rounded text-xl">draft</span>
+            </div>
+            <div>
+              <p className="text-xs font-bold text-text-main">Analise em andamento</p>
+              <p className="text-[10px] text-text-muted">
+                {draftBanner.filename} &middot; Etapa: {
+                  draftBanner.step === 'outcome_selection' ? 'Selecao de desfecho' :
+                  draftBanner.step === 'protocol_review' ? 'Revisao do protocolo' : 'Configuracao'
+                }
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => resumeDraft(draftBanner)}
+              className="px-4 py-2 bg-primary text-white rounded-lg text-[10px] font-semibold hover:bg-primary/90 transition-colors"
+            >
+              Retomar
+            </button>
+            <button
+              onClick={clearDraft}
+              className="px-3 py-2 bg-surface text-text-muted rounded-lg text-[10px] font-semibold hover:bg-white/10 transition-colors border border-border-subtle"
+            >
+              Descartar
+            </button>
+          </div>
+        </motion.div>
+      )}
+
       {/* Resumo de Ensaios Clínicos */}
       {!showReview && results.length === 0 && trials.length > 0 && (
         <motion.section 
@@ -1367,13 +1568,27 @@ export default function Dashboard() {
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {history.slice(0, 4).map((h, i) => (
-                    <div key={i} className="glass-card p-4 rounded-xl flex items-center gap-4 hover:bg-surface transition-colors group">
+                    <div
+                      key={i}
+                      onClick={() => {
+                        setResults(h.results || [])
+                        setCurrentAnalysisId(h.id)
+                        setAnalysisTitle(h.title || '')
+                        setSavedToProject(null)
+                        setShowTitleInput(false)
+                        setShowProjectPicker(false)
+                      }}
+                      className="glass-card p-4 rounded-xl flex items-center gap-4 hover:bg-surface transition-colors group cursor-pointer"
+                    >
                       <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary"><span className="material-symbols-rounded text-xl">history</span></div>
                       <div className="flex-1 overflow-hidden">
-                        <p className="text-xs font-bold text-text-main truncate">{h.filename}</p>
-                        <p className="text-[9px] text-text-muted truncate">Proc: {h.outcome || 'Indefinido'}</p>
+                        <p className="text-xs font-bold text-text-main truncate">{h.title || h.filename}</p>
+                        <p className="text-[9px] text-text-muted truncate">{h.outcome || 'Indefinido'} &middot; {h.results?.length || 0} testes</p>
                       </div>
-                      <span className="text-[9px] font-mono text-text-muted">{new Date(h.created_at).toLocaleDateString()}</span>
+                      <div className="flex flex-col items-end gap-1">
+                        <span className="text-[9px] font-mono text-text-muted">{new Date(h.created_at).toLocaleDateString()}</span>
+                        <span className="text-[8px] text-primary opacity-0 group-hover:opacity-100 transition-opacity">Ver resultados</span>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1421,38 +1636,99 @@ export default function Dashboard() {
                       <span className="material-symbols-rounded text-sm">help</span>
                       Como Usar?
                     </button>
-                    <button
-                      onClick={exportResultsCSV}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-teal-400/10 hover:bg-teal-400/20 text-teal-300 border border-teal-400/20 rounded-full text-[9px] font-semibold tracking-wide transition-all"
-                      title="Exportar tabela completa em CSV"
-                    >
-                      <span className="material-symbols-rounded text-sm">download</span>
-                      CSV
-                    </button>
-                    <button
-                      onClick={exportResultsJSON}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/20 rounded-full text-[9px] font-semibold tracking-wide transition-all"
-                      title="Exportar dados completos em JSON"
-                    >
-                      <span className="material-symbols-rounded text-sm">data_object</span>
-                      JSON
-                    </button>
-                    <button
-                      onClick={exportResultsExcel}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 border border-teal-500/20 rounded-full text-[9px] font-semibold tracking-wide transition-all"
-                      title="Exportar planilha Excel (.xlsx)"
-                    >
-                      <span className="material-symbols-rounded text-sm">table_chart</span>
-                      Excel
-                    </button>
-                    <button
-                      onClick={exportResultsPDF}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-stone-500/10 hover:bg-stone-500/20 text-text-muted border border-stone-500/20 rounded-full text-[9px] font-semibold tracking-wide transition-all"
-                      title="Exportar relatório para impressão / PDF"
-                    >
-                      <span className="material-symbols-rounded text-sm">print</span>
-                      PDF
-                    </button>
+                    <div className="relative group/export">
+                      <button
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-teal-400/10 hover:bg-teal-400/20 text-teal-300 border border-teal-400/20 rounded-full text-[9px] font-semibold tracking-wide transition-all"
+                        title="Exportar resultados"
+                      >
+                        <span className="material-symbols-rounded text-sm">download</span>
+                        Exportar
+                        <span className="material-symbols-rounded text-xs">expand_more</span>
+                      </button>
+                      <div className="absolute top-full mt-1 right-0 z-50 hidden group-hover/export:block w-36 bg-surface border border-border-subtle rounded-xl shadow-2xl overflow-hidden">
+                        <button onClick={exportResultsCSV} className="w-full text-left px-3 py-2 hover:bg-white/5 flex items-center gap-2 text-[10px] text-text-main"><span className="material-symbols-rounded text-sm text-teal-300">download</span>CSV</button>
+                        <button onClick={exportResultsJSON} className="w-full text-left px-3 py-2 hover:bg-white/5 flex items-center gap-2 text-[10px] text-text-main"><span className="material-symbols-rounded text-sm text-blue-400">data_object</span>JSON</button>
+                        <button onClick={exportResultsExcel} className="w-full text-left px-3 py-2 hover:bg-white/5 flex items-center gap-2 text-[10px] text-text-main"><span className="material-symbols-rounded text-sm text-teal-400">table_chart</span>Excel</button>
+                        <button onClick={exportResultsPDF} className="w-full text-left px-3 py-2 hover:bg-white/5 flex items-center gap-2 text-[10px] text-text-main"><span className="material-symbols-rounded text-sm text-stone-400">print</span>PDF</button>
+                      </div>
+                    </div>
+                    {currentAnalysisId && (
+                      <>
+                        <div className="relative">
+                          {showTitleInput ? (
+                            <form onSubmit={(e) => { e.preventDefault(); handleRenameAnalysis(analysisTitle || e.target.elements.title.value) }} className="flex items-center gap-1">
+                              <input
+                                name="title"
+                                autoFocus
+                                defaultValue={analysisTitle}
+                                placeholder="Nome da análise..."
+                                className="px-2 py-1 bg-surface border border-primary/30 rounded-lg text-[10px] text-text-main w-40 focus:outline-none focus:border-primary"
+                                onKeyDown={(e) => { if (e.key === 'Escape') setShowTitleInput(false) }}
+                              />
+                              <button type="submit" className="p-1 text-primary hover:bg-primary/10 rounded-md"><span className="material-symbols-rounded text-sm">check</span></button>
+                              <button type="button" onClick={() => setShowTitleInput(false)} className="p-1 text-text-muted hover:bg-white/10 rounded-md"><span className="material-symbols-rounded text-sm">close</span></button>
+                            </form>
+                          ) : (
+                            <button
+                              onClick={() => setShowTitleInput(true)}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-full text-[9px] font-semibold tracking-wide transition-all"
+                              title="Nomear esta análise"
+                            >
+                              <span className="material-symbols-rounded text-sm">edit</span>
+                              {analysisTitle || 'Nomear'}
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="relative">
+                          <button
+                            onClick={() => setShowProjectPicker(!showProjectPicker)}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[9px] font-semibold tracking-wide transition-all ${
+                              savedToProject
+                                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                : 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/20'
+                            }`}
+                            title="Salvar análise em um projeto"
+                          >
+                            <span className="material-symbols-rounded text-sm">{savedToProject ? 'check_circle' : 'folder'}</span>
+                            {savedToProject ? `Salvo em ${savedToProject}` : 'Salvar no Projeto'}
+                          </button>
+                          {showProjectPicker && (
+                            <div className="absolute top-full mt-2 right-0 z-50 w-64 bg-surface border border-border-subtle rounded-xl shadow-2xl overflow-hidden">
+                              <div className="p-2 border-b border-border-subtle">
+                                <p className="text-[9px] font-bold text-text-muted tracking-wide px-2 py-1">SELECIONAR PROJETO</p>
+                              </div>
+                              <div className="max-h-48 overflow-y-auto">
+                                {projects.length === 0 ? (
+                                  <p className="text-[10px] text-text-muted p-3 text-center">Nenhum projeto criado</p>
+                                ) : (
+                                  projects.map(p => (
+                                    <button
+                                      key={p.id}
+                                      onClick={() => handleSaveToProject(p.id)}
+                                      className="w-full text-left px-3 py-2 hover:bg-white/5 transition-colors flex items-center gap-2"
+                                    >
+                                      <span className="material-symbols-rounded text-sm text-primary">folder</span>
+                                      <span className="text-[10px] text-text-main truncate">{p.title}</span>
+                                    </button>
+                                  ))
+                                )}
+                              </div>
+                              <div className="p-2 border-t border-border-subtle">
+                                <Link
+                                  to="/archive"
+                                  className="flex items-center gap-2 px-3 py-2 hover:bg-white/5 rounded-lg transition-colors"
+                                >
+                                  <span className="material-symbols-rounded text-sm text-text-muted">add</span>
+                                  <span className="text-[10px] text-text-muted">Criar novo projeto</span>
+                                </Link>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
+
                     <button
                       onClick={handleNewAnalysis}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-surface hover:bg-white/10 text-text-muted hover:text-text-main border border-white/10 rounded-full text-[9px] font-semibold tracking-wide transition-all"

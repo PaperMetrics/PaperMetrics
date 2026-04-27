@@ -168,6 +168,7 @@ engine = create_engine(DATABASE_URL, echo=False, connect_args=connect_args)
 class AnalysisHistory(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: str = Field(index=True)
+    title: Optional[str] = Field(default=None)
     filename: str
     outcome: str
     protocol: str  # JSON Stringified
@@ -4653,6 +4654,7 @@ async def execute_protocol_v8(file: UploadFile = File(...), protocol: str = Form
         if errors_detected:
             print(f"ERRORS: {json.dumps(errors_detected, ensure_ascii=False)}")
         
+        analysis_id = None
         try:
             with Session(engine) as session:
                 record = AnalysisHistory(user_id=user_id, filename=file.filename, outcome=outcome if outcome else "Indefinido", protocol=protocol, results=json.dumps(results))
@@ -4660,11 +4662,13 @@ async def execute_protocol_v8(file: UploadFile = File(...), protocol: str = Form
                 notif = Notification(user_id=user_id, title="Análise Concluída", message=f"O dataset {file.filename} foi processado com sucesso.", type="success")
                 session.add(notif)
                 session.commit()
-                print(f"DATABASE: Resultado e Notificação salvos.")
+                session.refresh(record)
+                analysis_id = record.id
+                print(f"DATABASE: Resultado e Notificação salvos. analysis_id={analysis_id}")
         except Exception as db_err:
             print(f"DATABASE ERR: Falha ao salvar histórico -> {db_err}")
 
-        return clean_dict_values({"results": results, "errors": errors_detected, "validation": validation_report})
+        return clean_dict_values({"results": results, "errors": errors_detected, "validation": validation_report, "analysis_id": analysis_id})
     except HTTPException:
         raise
     except Exception as e:
@@ -6197,12 +6201,31 @@ async def get_history(user_id: str = Depends(get_current_user)):
         return [
             {
                 "id": h.id,
+                "title": h.title,
                 "filename": h.filename,
                 "outcome": h.outcome,
                 "results": json.loads(h.results) if h.results else [],
                 "created_at": h.created_at.isoformat()
             } for h in items
         ]
+
+
+class AnalysisHistoryUpdate(BaseModel):
+    title: Optional[str] = None
+
+@app.put("/api/history/{history_id}")
+async def update_history(history_id: int, body: AnalysisHistoryUpdate, user_id: str = Depends(get_current_user)):
+    """Atualiza metadados de uma análise (ex: título)."""
+    with Session(engine) as session:
+        record = session.get(AnalysisHistory, history_id)
+        if not record or record.user_id != user_id:
+            raise HTTPException(status_code=404, detail="Análise não encontrada")
+        if body.title is not None:
+            record.title = body.title
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+        return {"id": record.id, "title": record.title, "filename": record.filename, "outcome": record.outcome, "created_at": record.created_at.isoformat()}
 
 
 # ============================================================

@@ -937,7 +937,7 @@ export default function Archive() {
                                      <div key={analysis.id} className="border border-border-subtle rounded-lg p-4 bg-surface">
                                        <div className="flex justify-between items-start">
                                          <div>
-                                           <h4 className="font-bold text-text-main">{analysis.filename}</h4>
+                                           <h4 className="font-bold text-text-main">{analysis.title || analysis.filename}</h4>
                                            <p className="text-text-muted text-sm">
                                              {analysis.outcome} • {new Date(analysis.created_at).toLocaleDateString('pt-BR')}
                                            </p>
@@ -1614,7 +1614,7 @@ export default function Archive() {
                           onClick={() => linkAnalysis(expandedCard, h.id)}
                         >
                           <div>
-                            <p className="font-bold text-text-main group-hover:text-primary transition-colors">{h.filename}</p>
+                            <p className="font-bold text-text-main group-hover:text-primary transition-colors">{h.title || h.filename}</p>
                             <p className="text-xs text-text-muted">{h.outcome} • {new Date(h.created_at).toLocaleDateString('pt-BR')}</p>
                           </div>
                           <span className="material-symbols-rounded text-zinc-600 group-hover:text-primary transition-colors">link</span>
